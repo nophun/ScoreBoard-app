@@ -575,7 +575,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #6f42c1;
+      background-color: #6c757d; /* neutral gray when off */
       transition: .4s;
       border-radius: 24px;
     }
@@ -1720,8 +1720,11 @@
         <label for="newGameNameInput">Game Name:</label>
         <input type="text" id="newGameNameInput" placeholder="Enter game name..." class="form-input">
         <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-          <input type="checkbox" id="createLocalToggle" />
-          <label for="createLocalToggle" style="margin:0; font-size:13px; color:#333;">Create locally (do not sync to server)</label>
+            <label class="toggle-switch" title="Create locally (do not sync to server)" style="margin-right:8px;">
+              <input type="checkbox" id="createLocalToggle" aria-label="Create locally (do not sync to server)" />
+              <span class="toggle-slider"></span>
+            </label>
+            <label for="createLocalToggle" style="margin:0; font-size:13px; color:#333;">Create locally (do not sync to server)</label>
         </div>
       </div>
     </div>
@@ -1793,7 +1796,7 @@
     
     <div class="modal-buttons">
       <button class="btn-large bg-grey" onclick="closeAddRoundModal()">Cancel</button>
-      <button class="btn-large bg-blue" onclick="confirmRound()">Add Round</button>
+      <button id="confirmRoundBtn" class="btn-large bg-blue" onclick="confirmRound()">Add Round</button>
     </div>
   </div>
 </div>
@@ -1857,6 +1860,106 @@
     }
   }
 
+  // Helper: compute total players for a game (prefers explicit players arrays, falls back to metadata)
+  function getTotalPlayers(game) {
+    if (game && game.players && (Array.isArray(game.players.active) || Array.isArray(game.players.queue))) {
+      const activeLen = Array.isArray(game.players.active) ? game.players.active.length : 0;
+      const queueLen = Array.isArray(game.players.queue) ? game.players.queue.length : 0;
+      return activeLen + queueLen;
+    }
+    if (game && Array.isArray(game.playerCreationOrder)) return game.playerCreationOrder.length;
+    return 0;
+  }
+
+  // Helper: compute total rounds for a game (prefers explicit `rounds` array, falls back to `roundCount` metadata)
+  function getTotalRounds(game) {
+    if (game && Array.isArray(game.rounds)) return game.rounds.length;
+    if (game && typeof game.roundCount === 'number') return game.roundCount;
+    return 0;
+  }
+
+  // Realtime: WebSocket-based updates
+  // Connects to server WebSocket endpoint and refreshes data when notified.
+  (function(){
+    let _ws = null;
+    let _reconnectDelay = 1000;
+    const _maxDelay = 60000;
+
+    function _wsUrl() {
+      try {
+        // Map API_BASE (http/https) to ws/wss and append '/ws' endpoint
+        if (!API_BASE) return null;
+        return API_BASE.replace(/^http/, 'ws') + '/ws';
+      } catch (e) { return null; }
+    }
+
+    function handleMessage(payload) {
+      if (!payload) return;
+      // Generic 'games-updated' -> refresh metadata list
+      if (payload.type === 'games-updated') {
+        // debounce repeated events
+        if (window._realtimeScheduled) return;
+        window._realtimeScheduled = setTimeout(() => { window._realtimeScheduled = null; initializeGames(); }, 250);
+        return;
+      }
+      // Single-game update: fetch the canonical record and merge
+      if (payload.type === 'game-updated' && payload.id) {
+        fetch(API_BASE + '/api/games/' + encodeURIComponent(payload.id))
+          .then(r => r && r.ok ? r.json() : null)
+          .then(res => {
+            if (!res || !res.data) return;
+            const sid = res.id || payload.id;
+            games[sid] = res.data || games[sid] || {};
+            games[sid].name = res.name || games[sid].name;
+            games[sid].roundsLoaded = true;
+            try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+            renderGameList();
+            renderGamesManagement();
+            if (currentGameId === sid) {
+              loadCurrentGame();
+              updateGameDisplay();
+            }
+          }).catch(() => {});
+      }
+    }
+
+    function connect() {
+      if (!serverAvailable) return;
+      const url = _wsUrl();
+      if (!url) return;
+      try {
+        if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+        _ws = new WebSocket(url);
+        window._realtimeSocket = _ws;
+        _ws.onopen = () => { console.log('Realtime WS connected'); _reconnectDelay = 1000; };
+        _ws.onmessage = (ev) => {
+          try { const payload = JSON.parse(ev.data); handleMessage(payload); } catch (e) { console.warn('WS message parse failed', e); }
+        };
+        _ws.onclose = () => { console.warn('Realtime WS closed, reconnecting...'); window._realtimeSocket = null; setTimeout(connect, _reconnectDelay); _reconnectDelay = Math.min(_maxDelay, _reconnectDelay * 2); };
+        _ws.onerror = (e) => { console.warn('Realtime WS error', e); try { _ws.close(); } catch (e) {} };
+      } catch (e) {
+        console.warn('Realtime WS init failed', e);
+        setTimeout(connect, _reconnectDelay);
+        _reconnectDelay = Math.min(_maxDelay, _reconnectDelay * 2);
+      }
+    }
+
+    function disconnect() {
+      try {
+        if (_ws) {
+          _ws.onclose = null;
+          _ws.close();
+          _ws = null;
+          window._realtimeSocket = null;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Public helpers
+    window.initRealtimeWebSocket = function() { connect(); };
+    window.stopRealtimeWebSocket = function() { disconnect(); };
+  })();
+
   // Update UI and document title to reflect connection state
   const _baseTitle = (document && document.title) ? document.title.replaceAll(/\s*\(Online\)|\s*\(Offline\)/g, '') : 'ScoreBoard';
   function updateConnectionIndicator() {
@@ -1912,6 +2015,23 @@
       localStorage.setItem(GAMES_STORAGE_KEY, JSON.stringify(games));
     } catch (e) {
       console.warn('persistLocalGames failed', e);
+    }
+  }
+
+  // Safely load stored games from localStorage. Returns an object (possibly empty)
+  // and never throws. Malformed JSON or non-object values are handled gracefully
+  // and logged to the console for debugging.
+  function safeLoadStoredGames() {
+    try {
+      const raw = localStorage.getItem(GAMES_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+      console.warn('safeLoadStoredGames: stored value is not an object', parsed);
+      return {};
+    } catch (e) {
+      console.warn('safeLoadStoredGames: failed parsing stored games', e);
+      return {};
     }
   }
 
@@ -2716,38 +2836,24 @@
   function initializeGames() {
     // Load games from server (or create default if none). This function performs an initial sync with the backend.
     if (!serverAvailable) {
-      // Offline: prefer restoring saved games from GAMES_STORAGE_KEY.
-      try {
-        const raw = localStorage.getItem(GAMES_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-            // When offline, only surface games which were explicitly created/stored as local-only
-            const localOnlyGames = {};
-            Object.keys(parsed).forEach(id => {
-              try {
-                if (parsed[id] && parsed[id].localOnly) {
-                  localOnlyGames[id] = parsed[id];
-                }
-              } catch (e) {
-                console.warn('initializeGames: skipping malformed game entry', id, parsed?.[id], e);
-              }
-            });
-            games = localOnlyGames;
-            // restore last-open game if it is localOnly, otherwise pick the first local-only game
-            const last = localStorage.getItem('cardgame-current-game');
-            currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
-          } else {
-            games = {};
-            currentGameId = null;
+      // Offline: restore saved games from GAMES_STORAGE_KEY using safe loader.
+      const parsed = safeLoadStoredGames();
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        const localOnlyGames = {};
+        Object.keys(parsed).forEach(id => {
+          try {
+            if (parsed[id] && parsed[id].localOnly) {
+              localOnlyGames[id] = parsed[id];
+            }
+          } catch (e) {
+            console.warn('initializeGames: skipping malformed game entry', id, parsed?.[id], e);
           }
-        } else {
-          // No saved local games found — leave empty and show no-games UI
-          games = {};
-          currentGameId = null;
-        }
-      } catch (e) {
-        console.warn('Failed to load local games, starting with empty state', e);
+        });
+        games = localOnlyGames;
+        // restore last-open game if it is localOnly, otherwise pick the first local-only game
+        const last = localStorage.getItem('cardgame-current-game');
+        currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
+      } else {
         games = {};
         currentGameId = null;
       }
@@ -3171,7 +3277,10 @@
       eliminationLevels: {},
       elimination25Used: false,
       playerCreationOrder: filledNames.slice(),
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      // Mark roundsLoaded immediately to avoid an immediate refetch while
+      // the server create request is still in-flight.
+      roundsLoaded: true
     };
     const createToggle = document.getElementById('createLocalToggle');
     const userRequestedLocal = createToggle && createToggle.checked;
@@ -3206,6 +3315,9 @@
         games[gameId] = res.data || games[gameId];
         games[gameId].name = res.name || games[gameId].name;
         games[gameId].createdAt = res.createdAt || games[gameId].createdAt;
+        // Mark that we have the full server-side record so loadCurrentGame
+        // doesn't immediately attempt another fetch for this game.
+        games[gameId].roundsLoaded = true;
         saveCurrentGame(false);
         // Persist local backup
         persistLocalGames();
@@ -3255,8 +3367,10 @@
     
     currentGameId = gameId;
     localStorage.setItem("cardgame-current-game", currentGameId);
-    
+    games[gameId] = serverData || game;
     input.value = "";
+    // We fetched the canonical record so mark rounds as loaded
+    games[gameId].roundsLoaded = true;
     saveGames();
     loadCurrentGame();
     renderGameList();
@@ -3357,15 +3471,15 @@
       gameItem.className = "games-management-item" + (gameId === currentGameId ? " active" : "");
       
       // Calculate game stats
-      const totalRounds = game.rounds?.length || 0;
-      const activePlayers = (game.players?.active?.length || 0) + (game.players?.queue?.length || 0);
+      const totalRounds = getTotalRounds(game);
+      const totalPlayers = getTotalPlayers(game);
       const createdText = game.createdAt ? formatTimestamp(game.createdAt) : '';
 
       gameItem.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; box-sizing:border-box;">
           <div class="game-info" onclick="switchToGameAndView('${gameId}')" style="flex:1; min-width:0;">
             <div class="game-info-name">${game.name}</div>
-            <div class="game-info-details">${activePlayers} players • ${totalRounds} rounds</div>
+            <div class="game-info-details">${totalPlayers} players • ${totalRounds} rounds</div>
           </div>
           <div class="game-actions" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
             <div style="color:#666; text-align:right; margin-right:8px; font-size:12px;">${createdText}</div>
@@ -4164,12 +4278,7 @@
     });
     
     // Reset input values to empty
-    document.getElementById("p1Score").value = "";
-    document.getElementById("p2Score").value = "";
-    document.getElementById("p3Score").value = "";
-    document.getElementById("p4Score").value = "";
-    // Update points display
-    updatePointsDisplay();
+    resetRoundForm('clear');
     // Focus first input
     document.getElementById("p1Score").focus();
   }
@@ -4209,47 +4318,33 @@
     renderGamesManagement();
     closeSidebar();
   }
+  // Helpers to split confirmRound logic for readability and testability
+  function _getRoundCardsFromForm() {
+    return [
+      Number(document.getElementById("p1Score").value || 0),
+      Number(document.getElementById("p2Score").value || 0),
+      Number(document.getElementById("p3Score").value || 0),
+      Number(document.getElementById("p4Score").value || 0)
+    ];
+  }
 
-  function confirmRound() {
-    const p1Cards = Number(document.getElementById("p1Score").value || 0);
-    const p2Cards = Number(document.getElementById("p2Score").value || 0);
-    const p3Cards = Number(document.getElementById("p3Score").value || 0);
-    const p4Cards = Number(document.getElementById("p4Score").value || 0);
-
-    const cards = [p1Cards, p2Cards, p3Cards, p4Cards];
-    // Capture previous totals before applying this round
-    const prevTotalsObj = calculatePlayerTotals();
-    const prevTotals = prevTotalsObj.playerTotals || {};
-    
-    // Validate that exactly one player has 0 cards (winner)
+  function _validateCards(cards) {
     const winners = cards.filter(c => c === 0);
-    
-    if (winners.length === 0) {
-      alert("Invalid round: There must be exactly one winner (one player with 0 cards left).");
-      return;
-    }
-    
-    if (winners.length > 1) {
-      alert("Invalid round: There can only be one winner (only one player can have 0 cards left).");
-      return;
-    }
-    
-    const points = [
-      calculatePoints(p1Cards),
-      calculatePoints(p2Cards), 
-      calculatePoints(p3Cards),
-      calculatePoints(p4Cards)
-    ];
-    
-    // Snapshot players who participated in this round (before any eliminations)
-    const playersBefore = [
-      players.active[0] || null,
-      players.active[1] || null,
-      players.active[2] || null,
-      players.active[3] || null
-    ];
+    if (winners.length === 0) return { ok: false, msg: 'There must be exactly one winner (one player with 0 cards left).' };
+    if (winners.length > 1) return { ok: false, msg: 'There can only be one winner (only one player can have 0 cards left).' };
+    return { ok: true };
+  }
 
-    // Compute new totals after this round for each player who participated
+  function _computePoints(cards) {
+    return cards.map(c => calculatePoints(Number(c) || 0));
+  }
+
+  function _snapshotPlayers() {
+    return [players.active[0] || null, players.active[1] || null, players.active[2] || null, players.active[3] || null];
+  }
+
+  function _applyEliminations(prevTotals, playersBefore, points) {
+    // Recompute new totals and determine candidates
     const newTotals = { ...prevTotals };
     for (let i = 0; i < playersBefore.length; i++) {
       const name = playersBefore[i];
@@ -4259,7 +4354,7 @@
       newTotals[name] += add;
     }
 
-    // Determine elimination candidates (crossed their next 50-point threshold)
+    // Prepare 50-point candidates
     const candidates = [];
     for (let i = 0; i < playersBefore.length; i++) {
       const name = playersBefore[i];
@@ -4275,17 +4370,15 @@
       }
     }
 
-    // Sort by overshoot desc, then previous total desc
     candidates.sort((a, b) => {
       if (b.overshoot !== a.overshoot) return b.overshoot - a.overshoot;
       return (b.prev || 0) - (a.prev || 0);
     });
 
-    // Reset lastReplacements
+    // Reset last replacements for this round
     lastReplacements = [];
 
-    // ONE-TIME 25-point elimination: process before 50-point eliminations
-
+    // ONE-TIME 25-point rule
     if (!elimination25Used) {
       const candidates25 = [];
       for (let i = 0; i < playersBefore.length; i++) {
@@ -4293,32 +4386,21 @@
         if (!name) continue;
         const prev = prevTotals[name] || 0;
         const newTotal = newTotals[name] || 0;
-        // Only consider those who moved from below 25 to >=25
         if (prev < 25 && newTotal >= 25) {
           const overshoot = newTotal - 25;
           candidates25.push({ name, prev, overshoot, slotIndex: i, newTotal });
         }
       }
-
-      console.log('25-rule check', { elimination25Used, prevTotals, newTotals, playersBefore, playersActive: players.active });
-      console.log('25 candidates before sort', candidates25);
-
       if (candidates25.length > 0) {
-        // Order by overshoot desc then previous total desc
         candidates25.sort((a, b) => {
           if (b.overshoot !== a.overshoot) return b.overshoot - a.overshoot;
           return (b.prev || 0) - (a.prev || 0);
         });
         const c = candidates25[0];
-        // Use the original slotIndex (playersBefore index) to locate the slot directly
         const slotIdx = c.slotIndex;
         const slotPlayer = players.active[slotIdx];
-        console.log('25 candidate chosen', c, 'slotIdx', slotIdx, 'slotPlayer', slotPlayer, 'players.active', players.active);
-        // Ensure the slot still holds the same player name
         if (slotPlayer === c.name) {
           if (players.queue.length === 0) {
-            console.log('25-rule: no players in queue, skipping elimination for', c.name);
-            // Still record that the 25-point threshold was reached for tracking
             elimination25Used = true;
             lastReplacements.push({ slotIndex: slotIdx, eliminated: c.name, replacement: null, skipped: true });
           } else {
@@ -4326,122 +4408,133 @@
             players.queue.push(c.name);
             players.active[slotIdx] = replacement || null;
             elimination25Used = true;
-            // Record replacement for modal
             lastReplacements.push({ slotIndex: slotIdx, eliminated: c.name, replacement: replacement });
-            console.log('25-rule applied', { eliminated: c.name, replacement, playersActiveAfter: players.active, elimination25Used });
           }
-        } else {
-          console.log('25-rule candidate not active in its original slot, skipping', c.name, 'found at', slotPlayer);
         }
       }
     }
 
-    // Process eliminations in order (50-point thresholds)
+    // Process 50-point eliminations
     candidates.forEach(candidate => {
-      // Ensure player is still active (may have been replaced earlier)
       const currentIndex = players.active.indexOf(candidate.name);
       if (currentIndex === -1) return;
-
       if (players.queue.length === 0) {
-        // No available replacements; skip elimination but still track levels
-        console.log('50-rule: no players in queue, skipping elimination for', candidate.name);
         eliminationLevels[candidate.name] = candidate.newLevelsReached;
         lastReplacements.push({ slotIndex: currentIndex, eliminated: candidate.name, replacement: null, skipped: true });
         return;
       }
-
-      // Replacement comes from queue
       const replacement = players.queue.shift();
-      // Move eliminated player to end of queue
       players.queue.push(candidate.name);
-      // Replace active slot (replacement guaranteed to exist here)
       players.active[currentIndex] = replacement || null;
-
-      // Update levels reached for the eliminated player
       eliminationLevels[candidate.name] = candidate.newLevelsReached;
-      // Record replacement for modal
       lastReplacements.push({ slotIndex: currentIndex, eliminated: candidate.name, replacement: replacement });
     });
+  }
 
-    // Store round data with player names for proper tracking
-    const roundData = {
-      players: playersBefore.map(p => p || null),
-      cards: cards,
-      points: points,
-      timestamp: Date.now()
-    };
-
-      // Debug: log round being added
-      console.log('confirmRound: preparing to add round', { currentGameId, serverAvailable, roundData });
-
-      // Append locally first
-      rounds.push(roundData);
-      console.log('confirmRound: rounds length after push', rounds.length);
-
-    // POST the new round to the server endpoint (more efficient than PUTting whole game)
-    // Update local state immediately without issuing remote PUTs that could overwrite
-    // server-side `rounds` while the POST is still in-flight.
-    if (currentGameId) {
-      // Update local games object now (no remote PUT)
-      saveCurrentGame(false);
-      const game = games[currentGameId];
-      // Only attempt server append when the server is reachable and this game is not marked local-only
-      if (serverAvailable && game && !game.localOnly) {
-        fetch(API_BASE + '/api/games/' + encodeURIComponent(currentGameId) + '/rounds', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ round: roundData })
-        }).then(resp => {
-          if (!resp.ok) throw new Error('Remote append failed: ' + resp.status);
-          console.log('confirmRound: server append succeeded for', currentGameId);
-          try {
-            // Persist metadata (players, flags) to server without sending rounds
-            saveGame(currentGameId, false).catch(err => { console.warn('confirmRound: save metadata failed', err); });
-          } catch (e) {
-            console.warn('confirmRound: saving metadata after append failed', e);
-          }
-        }).catch(err => {
-          console.warn('confirmRound: appending round to server failed, falling back to full save', err);
-          try {
-            saveGame(currentGameId, true).catch(err => {
-              console.warn('confirmRound: full-game PUT failed, falling back to local save', err);
-              saveCurrentGame(true);
-            });
-          } catch (e) {
-            console.warn('confirmRound: attempting full-game PUT threw', e);
-            saveCurrentGame(true);
-          }
-        });
+  // Reset the add-round modal inputs. `mode` can be 'clear' (empty strings)
+  // or 'zero' (set values to "0"). Always updates the points display.
+  function resetRoundForm(mode = 'clear') {
+    try {
+      const ids = ['p1Score', 'p2Score', 'p3Score', 'p4Score'];
+      if (mode === 'zero') {
+        ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = '0'; });
       } else {
-        // Game is local-only or server is unavailable — persist locally only
+        ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      }
+      updatePointsDisplay();
+    } catch (e) {
+      console.warn('resetRoundForm failed', e);
+    }
+  }
+
+  async function _persistRoundAndSync(roundData) {
+    // Append locally first
+    rounds.push(roundData);
+    // Update local games object now (no remote PUT)
+    saveCurrentGame(false);
+
+    if (currentGameId) {
+      const game = games[currentGameId];
+      if (serverAvailable && game && !game.localOnly) {
+        await postRoundWithFallback(currentGameId, roundData);
+      } else {
         try { persistLocalGames(); } catch (e) { console.warn('confirmRound: persistLocalGames failed', e); }
       }
     } else {
-      // No currentGameId — fallback to local save
       saveCurrentGame(true);
     }
+  }
 
-    // Clear form inputs
-    document.getElementById("p1Score").value = "0";
-    document.getElementById("p2Score").value = "0";
-    document.getElementById("p3Score").value = "0";
-    document.getElementById("p4Score").value = "0";
-    
-    // Update points display
-    updatePointsDisplay();
-
-    // Close modal first to avoid any rendering issues
-    closeAddRoundModal();
-
-    // Show replacement modal if any replacements happened (handled inside process)
-    if (lastReplacements && lastReplacements.length > 0) {
-      showReplacementModal(lastReplacements);
+  // Attempts to append a round to the server via POST /games/:id/rounds.
+  // On success it will persist metadata-only via saveGame(gameId, false).
+  // If append fails it will fall back to issuing a full PUT of the game
+  // (including `rounds`) via saveGame(gameId, true). If that also fails
+  // it will persist locally as a last resort.
+  async function postRoundWithFallback(gameId, roundData) {
+    if (!gameId || !games[gameId]) return;
+    try {
+      const resp = await fetch(API_BASE + '/api/games/' + encodeURIComponent(gameId) + '/rounds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ round: roundData })
+      });
+      if (!resp.ok) throw new Error('Remote append failed: ' + resp.status);
+      try {
+        await saveGame(gameId, false);
+      } catch (e) {
+        console.warn('postRoundWithFallback: saving metadata after append failed', e);
+      }
+      return;
+    } catch (err) {
+      console.warn('postRoundWithFallback: append failed, attempting full-game PUT', err);
+      try {
+        await saveGame(gameId, true);
+        return;
+      } catch (e) {
+        console.warn('postRoundWithFallback: full-game PUT failed, falling back to local persist', e);
+        try { saveCurrentGame(true); } catch (ex) { console.warn('postRoundWithFallback: local persist failed', ex); }
+      }
     }
+  }
 
-    // Save and update displays (local state already updated above).
-    // Note: do not call a full save here — remote append is handled asynchronously.
-    updateGameDisplay();
-    render();
+  async function confirmRound() {
+    const cards = _getRoundCardsFromForm();
+    const valid = _validateCards(cards);
+    if (!valid.ok) { alert('Invalid round: ' + valid.msg); return; }
+    const points = _computePoints(cards);
+    const playersBefore = _snapshotPlayers();
+    const prevTotalsObj = calculatePlayerTotals();
+    const prevTotals = prevTotalsObj.playerTotals || {};
+
+    // Disable confirm controls to prevent accidental double-presses
+    const confirmBtn = document.getElementById('confirmRoundBtn');
+    const addRoundBtnEl = document.getElementById('addRoundBtn');
+    try {
+      if (confirmBtn) confirmBtn.disabled = true;
+      if (addRoundBtnEl) addRoundBtnEl.disabled = true;
+    } catch (e) { console.warn('Failed to disable add-round buttons', e); }
+
+    // Apply elimination rules which may mutate `players`, `players.queue`, `eliminationLevels`, `elimination25Used`, and `lastReplacements`.
+    _applyEliminations(prevTotals, playersBefore, points);
+
+    const roundData = { players: playersBefore.map(p => p || null), cards: cards, points: points, timestamp: Date.now() };
+    console.log('confirmRound: preparing to add round', { currentGameId, serverAvailable, roundData });
+
+    try {
+      await _persistRoundAndSync(roundData);
+
+      // Reset inputs and update UI
+      resetRoundForm('zero');
+      closeAddRoundModal();
+      if (lastReplacements && lastReplacements.length > 0) showReplacementModal(lastReplacements);
+      updateGameDisplay();
+      render();
+    } finally {
+      try {
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (addRoundBtnEl) addRoundBtnEl.disabled = false;
+      } catch (e) { console.warn('Failed to re-enable add-round buttons', e); }
+    }
   }
 
   function resetGame() {
@@ -4537,23 +4630,16 @@
 
   // Immediately load any locally saved games so UI shows them while server responds
   try {
-    const storedRawSync = localStorage.getItem(GAMES_STORAGE_KEY);
-    if (storedRawSync) {
-      try {
-        const storedSync = JSON.parse(storedRawSync);
-        if (storedSync && typeof storedSync === 'object' && Object.keys(storedSync).length > 0) {
-          games = storedSync;
-          // restore last-open game if known, otherwise pick the first
-          currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
-          renderGameList();
-          renderGamesManagement();
-          loadCurrentGame();
-          updateGameDisplay();
-          render();
-        }
-      } catch (e) {
-        console.warn('Immediate local load: failed to parse stored games', e);
-      }
+    const storedSync = safeLoadStoredGames();
+    if (storedSync && typeof storedSync === 'object' && Object.keys(storedSync).length > 0) {
+      games = storedSync;
+      // restore last-open game if known, otherwise pick the first
+      currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
+      renderGameList();
+      renderGamesManagement();
+      loadCurrentGame();
+      updateGameDisplay();
+      render();
     }
   } catch (e) {
     console.warn('Immediate local load failed', e);
@@ -4569,6 +4655,10 @@
     await testServerConnection();
   }
   await initializeGames();
+  // If server is available, start realtime WebSocket updates (server must provide WS at API_BASE + '/ws')
+  if (serverAvailable && typeof window.initRealtimeWebSocket === 'function') {
+    try { window.initRealtimeWebSocket(); } catch (e) { console.warn('initRealtimeWebSocket failed', e); }
+  }
   // If server is not available, ensure we only expose local-only games.
   // If local games were already loaded synchronously earlier, keep them and skip extra filtering.
   if (!serverAvailable) {
@@ -4618,31 +4708,24 @@
   // When online, merge any locally stored `localOnly` games so they remain visible
   if (serverAvailable) {
     try {
-      const storedRaw = localStorage.getItem(GAMES_STORAGE_KEY);
-      if (storedRaw) {
-        try {
-          const stored = JSON.parse(storedRaw);
-          let merged = false;
-          if (stored && typeof stored === 'object') {
-            Object.entries(stored).forEach(([id, g]) => {
-              if (g && g.localOnly && !games[id]) {
-                games[id] = g;
-                merged = true;
-              }
-            });
+      const stored = safeLoadStoredGames();
+      let merged = false;
+      if (stored && typeof stored === 'object') {
+        Object.entries(stored).forEach(([id, g]) => {
+          if (g && g.localOnly && !games[id]) {
+            games[id] = g;
+            merged = true;
           }
-          if (merged) {
-            // Ensure currentGameId still points to a valid game
-            if (!games[currentGameId]) {
-              currentGameId = Object.keys(games)[0];
-              localStorage.setItem('cardgame-current-game', currentGameId);
-            }
-            renderGameList();
-            renderGamesManagement();
-          }
-        } catch (e) {
-          console.warn('Merging local games: failed to parse stored games', e);
+        });
+      }
+      if (merged) {
+        // Ensure currentGameId still points to a valid game
+        if (!games[currentGameId]) {
+          currentGameId = Object.keys(games)[0];
+          localStorage.setItem('cardgame-current-game', currentGameId);
         }
+        renderGameList();
+        renderGamesManagement();
       }
     } catch (e) {
       console.warn('Merging local games while online failed', e);
