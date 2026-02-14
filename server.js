@@ -1,5 +1,5 @@
 const express = require('express');
-const path = require('path');
+const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -14,7 +14,7 @@ app.use(express.static(path.join(__dirname)));
 
 // Ensure data directory exists
 const dbPath = path.join(__dirname, 'data', 'games.db');
-const fs = require('fs');
+const fs = require('node:fs');
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 

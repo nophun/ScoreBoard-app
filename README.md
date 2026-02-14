@@ -7,6 +7,18 @@ Contents
 - `index.html` - frontend (now server-aware, supports offline/local fallback)
 - `data/` - holds the SQLite database after first run
 
+Recent changes
+- Frontend: improved offline-first behavior — local games are loaded immediately from `localStorage` while the app pings the server, and only `localOnly` games are shown when offline.
+- Rounds are appended incrementally using `POST /api/games/:id/rounds`; metadata-only updates use `PUT /api/games/:id` (server merges to preserve rounds).
+- The frontend uses a `deepClone()` helper that prefers `structuredClone()` (with a JSON fallback) to avoid brittle JSON cloning patterns.
+- The app now avoids sending `localOnly` when syncing a local game to the server; a `syncLocalGameToServer(gameId)` helper performs the migration and removes the local-only flag on success.
+- Removed an old legacy storage key; migration from `cardgame-rounds` is no longer performed.
+
+Developer notes
+- The frontend shows a debug `console.debug` of discovered games JSON during initialization to aid troubleshooting.
+- To skip the initial server ping (useful when opening `index.html` via `file://`), add `?skipServer=1` to the URL or set `globalThis.SKIP_SERVER_PING = true` before loading the page.
+- Server imports were modernized to use node core import style (e.g. `node:path`, `node:fs`) — ensure your Node runtime supports these.
+
 Quick start (development)
 
 1. Install dependencies and start:

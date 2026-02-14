@@ -298,6 +298,8 @@
       border-radius: 8px;
       width: 400px;
       max-width: 90%;
+      max-height: 80vh;
+      overflow: auto;
     }
     
     .modal-header {
@@ -335,6 +337,21 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+
+    /* Ensure modals remain visible on small-height screens */
+    @media (max-height: 720px) {
+      .modal-content {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        margin: 0;
+        width: calc(100% - 40px);
+        max-width: 480px;
+        max-height: 90vh;
+        overflow: auto;
+      }
     }
 
     .replacement-item {
@@ -1203,6 +1220,13 @@
       pointer-events: none;
       filter: grayscale(30%);
     }
+    /* Stack action buttons vertically on narrow/mobile screens */
+    .games-management-item .game-actions { display: flex; gap: 8px; align-items: center; }
+    @media (max-width: 480px) {
+      .games-management-item .game-actions { flex-direction: column; align-items: stretch; }
+      .games-management-item .game-actions .btn-small { width: 100%; margin-right: 0 !important; }
+      .games-management-item .game-actions .offline-badge { margin-left: 0; margin-bottom: 6px; }
+    }
 
     /* Sidebar header layout: space between title and connection indicator */
     .sidebar > h3 {
@@ -1401,7 +1425,7 @@
   </div>
 </div>
 
-<div class="main-content">
+  <div class="main-content">
   <!-- Main Game View -->
   <div id="gameView">
     <div class="game-header">
@@ -1512,6 +1536,13 @@
       <button class="game-secondary-menu-btn btn-large bg-purple" onclick="showStatistics()">Statistics</button>
       <button class="game-secondary-menu-btn btn-large bg-blue" onclick="showHistory()">History</button>
     </div>
+  </div>
+
+  <!-- No Games View (shown when there are no games) -->
+  <div id="noGamesView" style="display:none; padding: 40px; text-align:center;">
+    <h2>No games</h2>
+    <p style="color:#666; max-width:600px; margin: 0 auto 16px;">There are no games saved. Create a new game to get started.</p>
+    <button class="btn-large bg-blue" onclick="showNewGame()">Create New Game</button>
   </div>
 
   <!-- History View -->
@@ -1782,7 +1813,6 @@
   </div>
 
 <script type="module">
-  const STORAGE_KEY = "cardgame-rounds";
   const GAMES_STORAGE_KEY = "cardgame-games";
 
   // Offline/localStorage keys are kept for migration only
@@ -1847,10 +1877,10 @@
         document.title = _baseTitle + (serverAvailable ? ' (Online)' : ' (Offline)');
       }
     } catch (e) {
-      /* ignore */
+      console.warn('updateConnectionIndicator failed', e);
     }
     // Update server-action UI states when connection changes
-    try { updateServerActionStates(); } catch (e) { /* ignore */ }
+    try { updateServerActionStates(); } catch (e) { console.warn('updateServerActionStates call failed', e); }
   }
 
   // initialize indicator
@@ -1892,17 +1922,17 @@
         if (serverAvailable) {
           el.removeAttribute('disabled');
           el.classList.remove('disabled-server-action');
-          el.title = el.getAttribute('data-server-title') || '';
+          el.title = el.dataset.serverTitle || '';
         } else {
           el.setAttribute('disabled', 'disabled');
           el.classList.add('disabled-server-action');
           // keep existing title if provided, otherwise set a default
-          el.setAttribute('data-server-title', el.title || 'Requires server connection');
+          el.dataset.serverTitle = el.title || 'Requires server connection';
           el.title = 'Requires server connection';
         }
       });
     } catch (e) {
-      /* ignore */
+      console.warn('updateServerActionStates failed', e);
     }
   }
 
@@ -1950,6 +1980,7 @@
           games[gameId] = game;
         }
       } catch (e) {
+        console.warn('syncLocalGameToServer: fetching canonical record failed, marking game non-local', e);
         // If fetching canonical record failed, at least mark as non-local
         game.localOnly = false;
         games[gameId] = game;
@@ -1959,11 +1990,11 @@
       try {
         localStorage.setItem(GAMES_STORAGE_KEY, JSON.stringify(games));
       } catch (e) {
-        /* ignore */
+        console.warn('Failed writing games to localStorage after sync', e);
       }
 
       // Persist current in-memory state and refresh UI
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed after sync', e); }
       renderGameList();
       renderGamesManagement();
       alert('Game synced to server successfully');
@@ -2614,9 +2645,11 @@
   
   // Common function to switch between views
   function switchView(viewId) {
-    const views = ['gameView', 'historyView', 'statisticsView', 'playersView', 'newGameView', 'gamesManagementView'];
+    const views = ['gameView', 'historyView', 'statisticsView', 'playersView', 'newGameView', 'gamesManagementView', 'noGamesView'];
     views.forEach(id => {
-      document.getElementById(id).style.display = id === viewId ? 'block' : 'none';
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = id === viewId ? 'block' : 'none';
     });
   }
   
@@ -2681,50 +2714,42 @@
   }
 
   function initializeGames() {
-    // Load games from server (or create default if none). This function
-    // will perform an initial sync from the backend and migrate any local
-    // legacy rounds stored in localStorage into the default game if needed.
+    // Load games from server (or create default if none). This function performs an initial sync with the backend.
     if (!serverAvailable) {
       // Offline: prefer restoring saved games from GAMES_STORAGE_KEY.
-      // If none exist, fall back to legacy rounds (STORAGE_KEY) and create a default game.
       try {
-        const saved = JSON.parse(localStorage.getItem(GAMES_STORAGE_KEY) || '{}');
-        if (saved && Object.keys(saved).length > 0) {
-          games = saved;
-          // restore last-open game if known, otherwise pick the first
-          currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
+        const raw = localStorage.getItem(GAMES_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+            // When offline, only surface games which were explicitly created/stored as local-only
+            const localOnlyGames = {};
+            Object.keys(parsed).forEach(id => {
+              try {
+                if (parsed[id] && parsed[id].localOnly) {
+                  localOnlyGames[id] = parsed[id];
+                }
+              } catch (e) {
+                console.warn('initializeGames: skipping malformed game entry', id, parsed?.[id], e);
+              }
+            });
+            games = localOnlyGames;
+            // restore last-open game if it is localOnly, otherwise pick the first local-only game
+            const last = localStorage.getItem('cardgame-current-game');
+            currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
+          } else {
+            games = {};
+            currentGameId = null;
+          }
         } else {
-          // No saved games; try legacy single-rounds storage
-          const defaultGameId = "default-" + Date.now();
-          const existingRounds = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-          games[defaultGameId] = {
-            name: "Default Game",
-            rounds: existingRounds,
-            players: { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] },
-            eliminationLevels: {},
-            elimination25Used: false,
-            playerCreationOrder: ["Player 1","Player 2","Player 3","Player 4"],
-            createdAt: Date.now(),
-            localOnly: true
-          };
-          currentGameId = defaultGameId;
-          persistLocalGames();
+          // No saved local games found — leave empty and show no-games UI
+          games = {};
+          currentGameId = null;
         }
       } catch (e) {
-        console.warn('Failed to load local games, creating default', e);
-        const defaultGameId = "default-" + Date.now();
-        games[defaultGameId] = {
-          name: "Default Game",
-          rounds: [],
-          players: { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] },
-          eliminationLevels: {},
-          elimination25Used: false,
-          playerCreationOrder: ["Player 1","Player 2","Player 3","Player 4"],
-          createdAt: Date.now(),
-          localOnly: true
-        };
-        currentGameId = defaultGameId;
-        try { persistLocalGames(); } catch (e) { /* ignore */ }
+        console.warn('Failed to load local games, starting with empty state', e);
+        games = {};
+        currentGameId = null;
       }
       loadCurrentGame();
       renderGameList();
@@ -2732,7 +2757,10 @@
     }
 
     return fetch(API_BASE + '/api/games')
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch')))
+      .then(r => {
+        if (r && r.ok) return r.json();
+        throw new Error('Failed to fetch');
+      })
       .then(list => {
         if (Array.isArray(list) && list.length > 0) {
           // Convert array to keyed object like previous local model, but list may be metadata-only
@@ -2763,25 +2791,8 @@
             games[g.id].name = games[g.id].name || g.name || 'Game';
           });
         } else {
-          // No games on server: create a default game, migrating any local rounds
-          const existingRounds = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-          const defaultGameId = 'game-' + Date.now();
-          const defaultGame = {
-            name: 'Default Game',
-            rounds: existingRounds,
-            players: { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] },
-            eliminationLevels: {},
-            elimination25Used: false,
-            playerCreationOrder: ["Player 1","Player 2","Player 3","Player 4"],
-            createdAt: Date.now()
-          };
-          // Persist default to server
-          return fetch(API_BASE + '/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: defaultGameId, name: defaultGame.name, data: defaultGame }) })
-            .then(r => r.json())
-            .then(() => {
-              games = {};
-              games[defaultGameId] = defaultGame;
-            });
+          // No games on server: start with empty games collection
+          games = {};
         }
       })
       .then(() => {
@@ -2797,21 +2808,11 @@
         renderGameList();
       })
       .catch(err => {
-        console.warn('Failed to initialize games from server, falling back to local defaults', err);
-        // Fallback to previous local behavior
-        if (Object.keys(games).length === 0) {
-          const defaultGameId = "default-" + Date.now();
-          const existingRounds = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-          games[defaultGameId] = {
-            name: "Default Game",
-            rounds: existingRounds,
-            players: { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] },
-            eliminationLevels: {},
-            elimination25Used: false,
-            playerCreationOrder: ["Player 1","Player 2","Player 3","Player 4"],
-            createdAt: Date.now()
-          };
-          currentGameId = defaultGameId;
+        console.warn('Failed to initialize games from server, starting with empty state', err);
+        // Start empty if nothing available
+        if (!games || Object.keys(games).length === 0) {
+          games = {};
+          currentGameId = null;
         }
         loadCurrentGame();
         renderGameList();
@@ -2842,7 +2843,8 @@
         try { persistLocalGames(); } catch (e) { console.warn('localStorage fallback failed', e); }
       });
     } catch (e) {
-      try { persistLocalGames(); } catch (err) { console.warn('saveGames failed', err); }
+      console.warn('saveGames: unexpected error while saving remotely, falling back to local persist', e);
+      try { persistLocalGames(); } catch (err) { console.warn('saveGames: failed to persist locally', err); }
     }
   }
 
@@ -2854,7 +2856,7 @@
     const game = games[gameId];
     // If local-only or server not available, persist locally
     if (!serverAvailable || game.localOnly) {
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
       return Promise.resolve();
     }
 
@@ -2868,12 +2870,12 @@
       body: JSON.stringify(payload)
     }).then(resp => {
       if (!resp.ok) throw new Error('saveGame: remote save failed: ' + resp.status);
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
       return resp.json();
     }).catch(err => {
       console.warn('saveGame: remote save failed, falling back to local persist', err);
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
-      return Promise.reject(err);
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+      throw err;
     });
   }
 
@@ -2889,12 +2891,21 @@
   }
 
   function loadCurrentGame() {
+    if (Object.keys(games).length === 0) {
+      currentGameId = null;
+      showNoGames();
+      return;
+    }
+
     if (currentGameId && games[currentGameId]) {
       const game = games[currentGameId];
       // If we don't have rounds loaded for this game and server is available, fetch full game
       if (serverAvailable && !game.roundsLoaded && !game.localOnly) {
         fetch(API_BASE + '/api/games/' + encodeURIComponent(currentGameId))
-          .then(r => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch game')))
+          .then(r => {
+            if (r && r.ok) return r.json();
+            throw new Error('Failed to fetch game');
+          })
           .then(payload => {
             const data = payload.data || payload;
             games[currentGameId] = games[currentGameId] || {};
@@ -3020,6 +3031,16 @@
   
   function cancelNewGame() {
     showGame();
+  }
+
+  function showNoGames() {
+    switchView('noGamesView');
+    // Clear any transient state
+    rounds = [];
+    players = { active: [null, null, null, null], queue: [] };
+    // Update title
+    const titleEl = document.getElementById('gameTitle');
+    if (titleEl) titleEl.textContent = 'No games';
   }
   
   function addPlayerInput() {
@@ -3258,24 +3279,30 @@
   }
 
   function deleteGame(gameId) {
-    if (Object.keys(games).length <= 1) {
-      alert("Cannot delete the last game");
-      return;
-    }
+    // Allow deleting the last game; UI will show a 'no games' page afterwards
     
     if (!confirm("Are you sure you want to delete this game?")) {
       return;
     }
     // Back up the game in case remote delete fails and we need to restore
-    const backup = games[gameId] ? JSON.parse(JSON.stringify(games[gameId])) : null;
+    let backup = null;
+    if (games[gameId]) {
+      try {
+        backup = structuredClone(games[gameId]);
+      } catch (e) {
+        console.warn('deleteGame: failed to clone backup', e);
+        backup = null;
+      }
+    }
     const wasLocalOnly = !!(games[gameId] && games[gameId].localOnly);
 
     // Remove locally immediately for snappy UI
     delete games[gameId];
 
     if (currentGameId === gameId) {
-      currentGameId = Object.keys(games)[0];
-      localStorage.setItem("cardgame-current-game", currentGameId);
+      const remaining = Object.keys(games);
+      currentGameId = remaining.length > 0 ? remaining[0] : null;
+      if (currentGameId) localStorage.setItem("cardgame-current-game", currentGameId); else localStorage.removeItem('cardgame-current-game');
       loadCurrentGame();
     }
 
@@ -3286,24 +3313,30 @@
           if (!resp.ok) throw new Error('Remote delete failed: ' + resp.status);
           console.log('deleteGame: remote delete succeeded for', gameId);
           // Persist local snapshot as backup (without deleted game)
-          try { persistLocalGames(); } catch (e) { /* ignore */ }
+          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
         }).catch(err => {
           console.warn('deleteGame: remote delete failed, restoring local copy', err);
           // Restore local copy to avoid data loss
           if (backup) games[gameId] = backup;
-          try { persistLocalGames(); } catch (e) { /* ignore */ }
+          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
           alert('Failed to delete game on server: ' + (err && err.message ? err.message : 'unknown'));
         }).finally(() => {
           renderGameList();
           renderGamesManagement();
           render();
         });
-    } else {
+      } else {
       // Local-only game or offline: persist local deletion only
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
       renderGameList();
       renderGamesManagement();
       render();
+    }
+
+    // If no games remain, show the no-games view
+    if (!Object.keys(games).length) {
+      currentGameId = null;
+      showNoGames();
     }
   }
 
@@ -3334,7 +3367,7 @@
             <div class="game-info-name">${game.name}</div>
             <div class="game-info-details">${activePlayers} players • ${totalRounds} rounds</div>
           </div>
-          <div style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+          <div class="game-actions" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
             <div style="color:#666; text-align:right; margin-right:8px; font-size:12px;">${createdText}</div>
             ${game && game.localOnly ? '<span class="offline-badge" title="Stored locally">Local</span>' : ''}
             ${game && game.localOnly ? '<button class="btn-small" data-server-action="true" onclick="syncLocalGameToServer(\'' + gameId + '\')" style="background: #28a745; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Sync</button>' : ''}
@@ -3812,7 +3845,7 @@
       }).then(resp => {
         if (!resp.ok) throw new Error('Remote update failed: ' + resp.status);
         console.log('deleteLastRound: remote update succeeded for', currentGameId);
-        try { persistLocalGames(); } catch (e) { /* ignore */ }
+        try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
       }).catch(err => {
         console.warn('deleteLastRound: remote update failed, falling back to full save', err);
         // Fallback to full persist (this will trigger saveGames and local backup)
@@ -3820,7 +3853,7 @@
       });
     } else {
       // Local-only or offline: persist locally
-      try { persistLocalGames(); } catch (e) { /* ignore */ }
+      try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
     }
 
     updateGameDisplay();
@@ -4151,6 +4184,12 @@
   }
 
   function showGame() {
+    // If there are no games or no current game selected, show the no-games view
+    if (!currentGameId || Object.keys(games || {}).length === 0 || !games[currentGameId]) {
+      showNoGames();
+      return;
+    }
+
     switchView('gameView');
     updateGameDisplay();
   }
@@ -4345,28 +4384,38 @@
     if (currentGameId) {
       // Update local games object now (no remote PUT)
       saveCurrentGame(false);
-      fetch(API_BASE + '/api/games/' + encodeURIComponent(currentGameId) + '/rounds', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ round: roundData })
-      }).then(resp => {
-        if (!resp.ok) throw new Error('Remote append failed: ' + resp.status);
-        console.log('confirmRound: server append succeeded for', currentGameId);
-        // Update metadata (players, eliminationLevels, flags) on the server.
-        // Use saveCurrentGame(true) to trigger the PUT flow (saveGames will exclude rounds
-        // and server will merge them back) so players.active is persisted.
-        try {
-          // Save metadata only for this game (do not PUT all games)
-          saveGame(currentGameId, false).catch(() => {});
-        } catch (e) {
-          console.warn('confirmRound: saving metadata after append failed', e);
-        }
-      }).catch(err => {
-        console.warn('confirmRound: appending round to server failed, falling back to full save', err);
-        // Fallback: persist entire game state (may result in PUTs)
-        // Attempt to PUT the full game (including rounds) for this single game
-        try { saveGame(currentGameId, true).catch(() => { saveCurrentGame(true); }); } catch (e) { saveCurrentGame(true); }
-      });
+      const game = games[currentGameId];
+      // Only attempt server append when the server is reachable and this game is not marked local-only
+      if (serverAvailable && game && !game.localOnly) {
+        fetch(API_BASE + '/api/games/' + encodeURIComponent(currentGameId) + '/rounds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ round: roundData })
+        }).then(resp => {
+          if (!resp.ok) throw new Error('Remote append failed: ' + resp.status);
+          console.log('confirmRound: server append succeeded for', currentGameId);
+          try {
+            // Persist metadata (players, flags) to server without sending rounds
+            saveGame(currentGameId, false).catch(err => { console.warn('confirmRound: save metadata failed', err); });
+          } catch (e) {
+            console.warn('confirmRound: saving metadata after append failed', e);
+          }
+        }).catch(err => {
+          console.warn('confirmRound: appending round to server failed, falling back to full save', err);
+          try {
+            saveGame(currentGameId, true).catch(err => {
+              console.warn('confirmRound: full-game PUT failed, falling back to local save', err);
+              saveCurrentGame(true);
+            });
+          } catch (e) {
+            console.warn('confirmRound: attempting full-game PUT threw', e);
+            saveCurrentGame(true);
+          }
+        });
+      } else {
+        // Game is local-only or server is unavailable — persist locally only
+        try { persistLocalGames(); } catch (e) { console.warn('confirmRound: persistLocalGames failed', e); }
+      }
     } else {
       // No currentGameId — fallback to local save
       saveCurrentGame(true);
@@ -4482,7 +4531,33 @@
     updateSidebarVisibilityClass();
     applyButtonVisibility();
     window.addEventListener('resize', function() { updateSidebarVisibilityClass(); applyButtonVisibility(); });
+    // Ensure No Games view is visible immediately to avoid transient game flashes
+    try { showNoGames(); renderGameList(); renderGamesManagement(); } catch (e) { console.warn('Initial render/showNoGames failed (not ready yet)', e); }
   });
+
+  // Immediately load any locally saved games so UI shows them while server responds
+  try {
+    const storedRawSync = localStorage.getItem(GAMES_STORAGE_KEY);
+    if (storedRawSync) {
+      try {
+        const storedSync = JSON.parse(storedRawSync);
+        if (storedSync && typeof storedSync === 'object' && Object.keys(storedSync).length > 0) {
+          games = storedSync;
+          // restore last-open game if known, otherwise pick the first
+          currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
+          renderGameList();
+          renderGamesManagement();
+          loadCurrentGame();
+          updateGameDisplay();
+          render();
+        }
+      } catch (e) {
+        console.warn('Immediate local load: failed to parse stored games', e);
+      }
+    }
+  } catch (e) {
+    console.warn('Immediate local load failed', e);
+  }
 
   // Allow skipping the initial server ping to avoid noisy DevTools errors
   // Use URL param `?skipServer=1` or set `globalThis.SKIP_SERVER_PING = true` before loading.
@@ -4494,36 +4569,34 @@
     await testServerConnection();
   }
   await initializeGames();
-  // If server is not available, ensure we only expose local-only games
+  // If server is not available, ensure we only expose local-only games.
+  // If local games were already loaded synchronously earlier, keep them and skip extra filtering.
   if (!serverAvailable) {
     try {
-      const localEntries = Object.entries(games || {}).filter(([id, g]) => g && g.localOnly);
-      if (localEntries.length > 0) {
-        games = Object.fromEntries(localEntries);
-        if (!games[currentGameId]) {
-          currentGameId = Object.keys(games)[0];
-          localStorage.setItem('cardgame-current-game', currentGameId);
+      if (games && Object.keys(games).length > 0) {
+        // Local games already present (loaded before server ping)
+        updateConnectionIndicator();
+        renderGameList();
+        renderGamesManagement();
+      } else {
+        const localEntries = Object.entries(games || {}).filter(([id, g]) => g && g.localOnly);
+        if (localEntries.length > 0) {
+          games = Object.fromEntries(localEntries);
+          if (!games[currentGameId]) {
+            currentGameId = Object.keys(games)[0];
+            localStorage.setItem('cardgame-current-game', currentGameId);
+          }
+          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          renderGameList();
+          renderGamesManagement();
+        } else if (!Object.keys(games || {}).length) {
+          // No local games found — keep empty and show the no-games UI
+          games = {};
+          currentGameId = null;
+          renderGameList();
+          renderGamesManagement();
+          showNoGames();
         }
-        try { persistLocalGames(); } catch (e) { /* ignore */ }
-        renderGameList();
-        renderGamesManagement();
-      } else if (!Object.keys(games || {}).length) {
-        // No local games found — create a minimal local default so UI remains usable
-        const gid = 'game-' + Date.now();
-        games = games || {};
-        games[gid] = {
-          name: 'Local Game',
-          rounds: [],
-          players: { active: [null, null, null, null], queue: [] },
-          eliminationLevels: {},
-          elimination25Used: false,
-          createdAt: Date.now(),
-          localOnly: true
-        };
-        currentGameId = gid;
-        try { persistLocalGames(); } catch (e) { /* ignore */ }
-        renderGameList();
-        renderGamesManagement();
       }
     } catch (e) {
       console.warn('Offline filtering of games failed', e);
@@ -4531,33 +4604,53 @@
   }
   updateGameDisplay();
   render();
+  // After initialization, if we have a current game selected show it;
+  // otherwise keep the No Games view visible.
+  try {
+    if (currentGameId && games[currentGameId]) {
+      // Ensure full game data is loaded and then show game view
+      loadCurrentGame();
+      showGame();
+    } else {
+      showNoGames();
+    }
+  } catch (e) { console.warn('updateServerActionStates call failed', e); }
   // When online, merge any locally stored `localOnly` games so they remain visible
   if (serverAvailable) {
     try {
       const storedRaw = localStorage.getItem(GAMES_STORAGE_KEY);
       if (storedRaw) {
-        const stored = JSON.parse(storedRaw || '{}');
-        let merged = false;
-        Object.entries(stored).forEach(([id, g]) => {
-          if (g && g.localOnly && !games[id]) {
-            games[id] = g;
-            merged = true;
+        try {
+          const stored = JSON.parse(storedRaw);
+          let merged = false;
+          if (stored && typeof stored === 'object') {
+            Object.entries(stored).forEach(([id, g]) => {
+              if (g && g.localOnly && !games[id]) {
+                games[id] = g;
+                merged = true;
+              }
+            });
           }
-        });
-        if (merged) {
-          // Ensure currentGameId still points to a valid game
-          if (!games[currentGameId]) {
-            currentGameId = Object.keys(games)[0];
-            localStorage.setItem('cardgame-current-game', currentGameId);
+          if (merged) {
+            // Ensure currentGameId still points to a valid game
+            if (!games[currentGameId]) {
+              currentGameId = Object.keys(games)[0];
+              localStorage.setItem('cardgame-current-game', currentGameId);
+            }
+            renderGameList();
+            renderGamesManagement();
           }
-          renderGameList();
-          renderGamesManagement();
+        } catch (e) {
+          console.warn('Merging local games: failed to parse stored games', e);
         }
       }
     } catch (e) {
       console.warn('Merging local games while online failed', e);
     }
   }
+
+  // Reveal UI now initialization completed to avoid transient flashes
+  try { document.body.classList.remove('preinit'); } catch (e) { console.warn('remove preinit class failed', e); }
 
   // --- Elimination tests moved to external file: elimination-tests.js ---
   // Backwards-compatible stub: delegates to external loader if present
@@ -4683,7 +4776,7 @@
       const fn = (globalThis[name] === undefined) ? eval(name) : globalThis[name];
       if (typeof fn === 'function' && globalThis[name] === undefined) globalThis[name] = fn;
     } catch (e) {
-      // ignore names that are not defined in module scope
+      console.debug(`__expose: failed to expose function ${name}`, e);
     }
   });
 </script>
