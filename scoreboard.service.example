@@ -1,0 +1,15 @@
+[Unit]
+Description=ScoreBoard App (Node.js)
+After=network.target
+
+[Service]
+Environment=NODE_ENV=production
+WorkingDirectory=/path/to/ScoreBoard-app
+ExecStart=/usr/bin/node /path/to/ScoreBoard-app/server.js
+Restart=always
+RestartSec=5
+# Change 'pi' to the appropriate user if needed
+User=pi
+
+[Install]
+WantedBy=multi-user.target
