@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Environment=NODE_ENV=production
-WorkingDirectory=/path/to/ScoreBoard-app
-ExecStart=/usr/bin/node /path/to/ScoreBoard-app/server.js
+WorkingDirectory=/home/noserver/score-app/
+ExecStart=/usr/bin/node /home/noserver/score-app/server.js
 Restart=always
 RestartSec=5
 # Change 'pi' to the appropriate user if needed
-User=pi
+User=noserver
 
 [Install]
 WantedBy=multi-user.target

@@ -9,8 +9,8 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-// Serve static frontend files from project root
-app.use(express.static(path.join(__dirname)));
+// Serve static frontend files from the `public/` folder at project root
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Ensure data directory exists
 const dbPath = path.join(__dirname, 'data', 'games.db');
@@ -177,4 +177,14 @@ wss.on('connection', (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Serving static files from ${path.join(__dirname, '..', 'public')}`);
+});
+
+// SPA fallback: return index.html for unknown non-API routes so client-side routing works
+app.get('*', (req, res) => {
+  // If request looks like an API or websocket health check, let it 404 here
+  if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path === '/health') {
+    return res.status(404).end();
+  }
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });

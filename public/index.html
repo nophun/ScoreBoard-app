@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Card Game Scores</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1976d2">
+  <link rel="icon" href="/icons/favicon.ico" type="image/x-icon">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
     body { 
@@ -4523,9 +4526,17 @@
     // Prevent re-entry
     if (globalThis._addingRound) return;
     globalThis._addingRound = true;
-    const cards = _getRoundCardsFromForm();
-    const valid = _validateCards(cards);
-    if (!valid.ok) { alert('Invalid round: ' + valid.msg); return; }
+      const cards = _getRoundCardsFromForm();
+      const valid = _validateCards(cards);
+      if (!valid.ok) {
+        alert('Invalid round: ' + valid.msg);
+        // clear adding state and re-enable controls so the user can correct input
+        try { globalThis._addingRound = false; } catch (e) { console.warn('Failed to clear _addingRound flag after validation failure', e); }
+        try { const overlay = document.getElementById('addRoundOverlay'); if (overlay) overlay.style.display = 'none'; } catch (e) { console.warn('Failed to hide addRoundOverlay after validation failure', e); }
+        try { const confirmBtn = document.getElementById('confirmRoundBtn'); if (confirmBtn) confirmBtn.disabled = false; } catch (e) { console.warn('Failed to re-enable confirm button after validation failure', e); }
+        try { const addRoundBtnEl = document.getElementById('addRoundBtn'); if (addRoundBtnEl) addRoundBtnEl.disabled = false; } catch (e) { console.warn('Failed to re-enable add-round button after validation failure', e); }
+        return;
+      }
     const points = _computePoints(cards);
     const playersBefore = _snapshotPlayers();
     const prevTotalsObj = calculatePlayerTotals();
@@ -4935,6 +4946,35 @@
     s.onerror = function() { console.log('integration-tests.js not found, skipping integration tests'); s.remove(); };
     document.body.appendChild(s);
   })();
+</script>
+
+<!-- PWA install button and service worker registration -->
+<button id="installBtn" style="display:none;position:fixed;right:16px;bottom:16px;z-index:2000" class="btn-large bg-blue">Install</button>
+<script>
+  // Service worker registration
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js').then(reg => {
+      console.log('ServiceWorker registered', reg);
+    }).catch(err => console.warn('SW register failed', err));
+  }
+
+  // beforeinstallprompt handling for showing an install button
+  let deferredPrompt = null;
+  const installBtn = document.getElementById('installBtn');
+  globalThis.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (installBtn) installBtn.style.display = 'block';
+  });
+
+  if (installBtn) installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    installBtn.style.display = 'none';
+    console.log('User install choice', choice);
+  });
 </script>
 
 </body>
