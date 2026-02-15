@@ -294,6 +294,7 @@
       margin: 10% auto;
       margin-left: calc(50% + 125px);
       transform: translateX(-50%);
+      position: relative;
       padding: 20px;
       border-radius: 8px;
       width: 400px;
@@ -1766,6 +1767,16 @@
 <!-- Add Round Modal -->
 <div id="addRoundModal" class="modal">
   <div class="modal-content">
+    <div id="addRoundOverlay" style="position:absolute; inset:0; background:rgba(255,255,255,0.82); z-index:60; display:flex; align-items:center; justify-content:center;">
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:6px; background:rgba(255,255,255,0.95); box-shadow:0 2px 6px rgba(0,0,0,0.12);">
+        <svg width="20" height="20" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="25" cy="25" r="20" stroke="#007bff" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="31.4 31.4">
+            <animateTransform attributeName="transform" type="rotate" dur="1s" repeatCount="indefinite" from="0 25 25" to="360 25 25" />
+          </circle>
+        </svg>
+        <strong style="color:#007bff; font-size:14px;">Saving…</strong>
+      </div>
+    </div>
     <div class="modal-header">
       <h3>Enter Cards Left</h3>
       <button type="button" class="close" onclick="closeAddRoundModal()" aria-label="Close modal">&times;</button>
@@ -1796,7 +1807,7 @@
     
     <div class="modal-buttons">
       <button class="btn-large bg-grey" onclick="closeAddRoundModal()">Cancel</button>
-      <button id="confirmRoundBtn" class="btn-large bg-blue" onclick="confirmRound()">Add Round</button>
+          <button id="confirmRoundBtn" class="btn-large bg-blue" onclick="confirmRound()">Add Round</button>
     </div>
   </div>
 </div>
@@ -1890,7 +1901,7 @@
         // Map API_BASE (http/https) to ws/wss and append '/ws' endpoint
         if (!API_BASE) return null;
         return API_BASE.replace(/^http/, 'ws') + '/ws';
-      } catch (e) { return null; }
+      } catch (e) { console.warn('wsUrl build failed', e); return null; }
     }
 
     function handleMessage(payload) {
@@ -1898,8 +1909,8 @@
       // Generic 'games-updated' -> refresh metadata list
       if (payload.type === 'games-updated') {
         // debounce repeated events
-        if (window._realtimeScheduled) return;
-        window._realtimeScheduled = setTimeout(() => { window._realtimeScheduled = null; initializeGames(); }, 250);
+        if (globalThis._realtimeScheduled) return;
+        globalThis._realtimeScheduled = setTimeout(() => { globalThis._realtimeScheduled = null; initializeGames(); }, 250);
         return;
       }
       // Single-game update: fetch the canonical record and merge
@@ -1919,7 +1930,7 @@
               loadCurrentGame();
               updateGameDisplay();
             }
-          }).catch(() => {});
+          }).catch(err => { console.warn('fetch game for update failed', err); });
       }
     }
 
@@ -1930,13 +1941,13 @@
       try {
         if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
         _ws = new WebSocket(url);
-        window._realtimeSocket = _ws;
+        globalThis._realtimeSocket = _ws;
         _ws.onopen = () => { console.log('Realtime WS connected'); _reconnectDelay = 1000; };
         _ws.onmessage = (ev) => {
           try { const payload = JSON.parse(ev.data); handleMessage(payload); } catch (e) { console.warn('WS message parse failed', e); }
         };
-        _ws.onclose = () => { console.warn('Realtime WS closed, reconnecting...'); window._realtimeSocket = null; setTimeout(connect, _reconnectDelay); _reconnectDelay = Math.min(_maxDelay, _reconnectDelay * 2); };
-        _ws.onerror = (e) => { console.warn('Realtime WS error', e); try { _ws.close(); } catch (e) {} };
+        _ws.onclose = () => { console.warn('Realtime WS closed, reconnecting...'); globalThis._realtimeSocket = null; setTimeout(connect, _reconnectDelay); _reconnectDelay = Math.min(_maxDelay, _reconnectDelay * 2); };
+        _ws.onerror = (e) => { console.warn('Realtime WS error', e); try { _ws.close(); } catch (err) { console.warn('WebSocket close failed', err); } };
       } catch (e) {
         console.warn('Realtime WS init failed', e);
         setTimeout(connect, _reconnectDelay);
@@ -1950,14 +1961,14 @@
           _ws.onclose = null;
           _ws.close();
           _ws = null;
-          window._realtimeSocket = null;
+          globalThis._realtimeSocket = null;
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) { console.warn('disconnect failed', e); }
     }
 
     // Public helpers
-    window.initRealtimeWebSocket = function() { connect(); };
-    window.stopRealtimeWebSocket = function() { disconnect(); };
+    globalThis.initRealtimeWebSocket = function() { connect(); };
+    globalThis.stopRealtimeWebSocket = function() { disconnect(); };
   })();
 
   // Update UI and document title to reflect connection state
@@ -4279,11 +4290,22 @@
     
     // Reset input values to empty
     resetRoundForm('clear');
+    // Ensure overlay state is cleared when opening
+    try {
+      globalThis._addingRound = false;
+      const overlay = document.getElementById('addRoundOverlay'); if (overlay) overlay.style.display = 'none';
+      const confirmBtn = document.getElementById('confirmRoundBtn'); if (confirmBtn) confirmBtn.disabled = false;
+      const addRoundBtnEl = document.getElementById('addRoundBtn'); if (addRoundBtnEl) addRoundBtnEl.disabled = false;
+      const closeBtns = modal.querySelectorAll('.close'); if (closeBtns && closeBtns.length) closeBtns.forEach(b => { try { b.disabled = false; } catch(e) { console.warn('Failed to enable modal close button', e); } });
+    } catch (e) { console.warn('Failed to reset add-round modal state on show', e); }
+
     // Focus first input
     document.getElementById("p1Score").focus();
   }
 
   function closeAddRoundModal() {
+    // Prevent closing while a round save is in progress
+    if (globalThis._addingRound) return;
     document.getElementById("addRoundModal").style.display = "none";
   }
 
@@ -4498,6 +4520,9 @@
   }
 
   async function confirmRound() {
+    // Prevent re-entry
+    if (globalThis._addingRound) return;
+    globalThis._addingRound = true;
     const cards = _getRoundCardsFromForm();
     const valid = _validateCards(cards);
     if (!valid.ok) { alert('Invalid round: ' + valid.msg); return; }
@@ -4509,7 +4534,13 @@
     // Disable confirm controls to prevent accidental double-presses
     const confirmBtn = document.getElementById('confirmRoundBtn');
     const addRoundBtnEl = document.getElementById('addRoundBtn');
+    const modal = document.getElementById('addRoundModal');
+    const closeButtons = modal ? modal.querySelectorAll('.close') : [];
     try {
+      // show overlay and mark saving state
+      const overlay = document.getElementById('addRoundOverlay');
+      if (overlay) overlay.style.display = 'flex';
+      if (closeButtons && closeButtons.length) closeButtons.forEach(b => { try { b.disabled = true; } catch (e) { console.warn('Failed to disable modal close button', e); } });
       if (confirmBtn) confirmBtn.disabled = true;
       if (addRoundBtnEl) addRoundBtnEl.disabled = true;
     } catch (e) { console.warn('Failed to disable add-round buttons', e); }
@@ -4524,12 +4555,19 @@
       await _persistRoundAndSync(roundData);
 
       // Reset inputs and update UI
+      // clear adding flag and hide overlay so the modal can close
+      try { globalThis._addingRound = false; } catch (e) { console.warn('Failed to clear _addingRound flag', e); }
+      try { const overlay = document.getElementById('addRoundOverlay'); if (overlay) overlay.style.display = 'none'; } catch (e) { console.warn('Failed to hide addRoundOverlay', e); }
       resetRoundForm('zero');
       closeAddRoundModal();
       if (lastReplacements && lastReplacements.length > 0) showReplacementModal(lastReplacements);
       updateGameDisplay();
       render();
     } finally {
+      // clear saving state, hide spinner, re-enable controls
+      globalThis._addingRound = false;
+      try { const overlay = document.getElementById('addRoundOverlay'); if (overlay) overlay.style.display = 'none'; } catch (e) { console.warn('Failed to hide addRoundOverlay', e); }
+      try { if (closeButtons && closeButtons.length) closeButtons.forEach(b => { try { b.disabled = false; } catch (e) { console.warn('Failed to enable modal close button', e); } }); } catch (e) { console.warn('Failed to re-enable modal close buttons', e); }
       try {
         if (confirmBtn) confirmBtn.disabled = false;
         if (addRoundBtnEl) addRoundBtnEl.disabled = false;
@@ -4608,14 +4646,19 @@
     modalInputs.forEach(inputId => {
       document.getElementById(inputId).addEventListener("keypress", function(e) {
         if (e.key === "Enter") {
+          if (globalThis._addingRound) {
+            e.preventDefault();
+            return;
+          }
           confirmRound();
         }
       });
     });
     
-    // Handle Escape key to close modal
+    // Handle Escape key to close modal (disabled while saving)
     document.addEventListener("keydown", function(e) {
       if (e.key === "Escape") {
+        if (globalThis._addingRound) return;
         closeAddRoundModal();
         closeReplacementModal();
       }
@@ -4656,8 +4699,8 @@
   }
   await initializeGames();
   // If server is available, start realtime WebSocket updates (server must provide WS at API_BASE + '/ws')
-  if (serverAvailable && typeof window.initRealtimeWebSocket === 'function') {
-    try { window.initRealtimeWebSocket(); } catch (e) { console.warn('initRealtimeWebSocket failed', e); }
+  if (serverAvailable && typeof globalThis.initRealtimeWebSocket === 'function') {
+    try { globalThis.initRealtimeWebSocket(); } catch (e) { console.warn('initRealtimeWebSocket failed', e); }
   }
   // If server is not available, ensure we only expose local-only games.
   // If local games were already loaded synchronously earlier, keep them and skip extra filtering.

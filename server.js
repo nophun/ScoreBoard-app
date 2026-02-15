@@ -157,7 +157,7 @@ app.get('/health', (req, res) => {
 });
 
 // Create HTTP server and attach WebSocket server for realtime notifications
-const http = require('http');
+const http = require('node:http');
 const WebSocket = require('ws');
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
