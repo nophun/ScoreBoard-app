@@ -1860,6 +1860,33 @@
   // Last replacements captured for modal display
   let lastReplacements = [];
 
+  // Allow tests and external scripts to set the module-scoped currentGameId
+  function setCurrentGameId(id) {
+    try { currentGameId = id || null; } catch (e) { console.warn('setCurrentGameId: setting currentGameId failed', e); }
+    try { if (currentGameId) localStorage.setItem('cardgame-current-game', currentGameId); else localStorage.removeItem('cardgame-current-game'); } catch (e) { console.warn('setCurrentGameId: localStorage update failed', e); }
+    try { if (typeof loadCurrentGame === 'function') loadCurrentGame(); } catch (e) { console.warn('setCurrentGameId: loadCurrentGame failed', e); }
+    try { if (typeof renderGameList === 'function') renderGameList(); } catch (e) { console.warn('setCurrentGameId: renderGameList failed', e); }
+  }
+  try { globalThis.setCurrentGameId = setCurrentGameId; } catch (e) { console.warn('Failed to expose setCurrentGameId on globalThis', e); }
+
+  // Tests: allow syncing an array into the module-scoped `rounds` in-place
+  function syncRoundsToModule(arr) {
+    try {
+      if (!Array.isArray(arr)) return;
+      rounds.length = 0;
+      arr.forEach(r => rounds.push(r));
+      try { globalThis.rounds = rounds; } catch (e) { console.warn('syncRoundsToModule: failed to expose rounds on globalThis', e); }
+    } catch (e) { console.warn('syncRoundsToModule failed', e); }
+  }
+  try { globalThis.syncRoundsToModule = syncRoundsToModule; } catch (e) { console.warn('Failed to expose syncRoundsToModule on globalThis', e); }
+
+  // Tests: allow explicitly setting the module-scoped elimination25Used flag
+  function setElimination25Used(val) {
+    try { elimination25Used = !!val; } catch (e) { console.warn('setElimination25Used: failed to set flag', e); }
+    try { globalThis.elimination25Used = elimination25Used; } catch (e) { console.warn('setElimination25Used: failed to expose flag on globalThis', e); }
+  }
+  try { globalThis.setElimination25Used = setElimination25Used; } catch (e) { console.warn('Failed to expose setElimination25Used on globalThis', e); }
+
   function toggleAddPlayerForm() {
     const header = document.querySelector('.players-column button.collapsible');
     const form = document.querySelector('.add-player-form');
@@ -1889,7 +1916,7 @@
 
   // Helper: compute total rounds for a game (prefers explicit `rounds` array, falls back to `roundCount` metadata)
   function getTotalRounds(game) {
-    if (game && Array.isArray(game.rounds)) return game.rounds.length;
+    if (game && Array.isArray(game.rounds) && game.roundsLoaded) return game.rounds.length;
     if (game && typeof game.roundCount === 'number') return game.roundCount;
     return 0;
   }
@@ -2000,6 +2027,14 @@
     }
     // Update server-action UI states when connection changes
     try { updateServerActionStates(); } catch (e) { console.warn('updateServerActionStates call failed', e); }
+  }
+
+  // Helper to set module-scoped `serverAvailable` from external scripts/tests
+  function setServerAvailable(v) {
+    try {
+      serverAvailable = !!v;
+      updateConnectionIndicator();
+    } catch (e) { console.warn('setServerAvailable failed', e); }
   }
 
   // initialize indicator
@@ -3495,7 +3530,7 @@
       gameItem.className = "games-management-item" + (gameId === currentGameId ? " active" : "");
       
       // Calculate game stats
-      const totalRounds = getTotalRounds(game);
+      let totalRounds = getTotalRounds(game);
       const totalPlayers = getTotalPlayers(game);
       const createdText = game.createdAt ? formatTimestamp(game.createdAt) : '';
 
@@ -4938,20 +4973,30 @@
   };
 
   // Expose functions to global scope for inline handlers (modules are module-scoped)
+  // Expose selected functions and state to globalThis so external test scripts can access them.
+  // Include runtime state (`players`, `rounds`) and utility functions used by tests.
   const __expose = [
     'toggleSidebar','closeSidebar','showGame','showPlayers','showStatistics','showHistory',
     'showNewGame','showGamesManagement','showAddRoundModal','closeAddRoundModal','confirmRound','deleteLastRound','addPlayer','addPlayerInput',
     'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame','savePlayerName',
     'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName',
     'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
-    'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer'
+    'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
+    // Expose runtime state and helper functions so tests can run against the live app
+    'players','rounds','games','currentGameId','eliminationLevels','elimination25Used','parseRoundData','calculatePlayerTotals','calculatePoints','reverseCalculateCards','computeTotals','computeCumulativeSnapshots','loadCurrentGame',
+    'setCurrentGameId','persistLocalGames','saveCurrentGame','setServerAvailable','runEliminationTests','runUnitTests','runIntegrationTests'
   ];
+
   __expose.forEach(name => {
     try {
-      const fn = (globalThis[name] === undefined) ? eval(name) : globalThis[name];
-      if (typeof fn === 'function' && globalThis[name] === undefined) globalThis[name] = fn;
+      if (globalThis[name] !== undefined) return; // already exposed
+      // Attempt to evaluate the name in module scope; for objects this will be a reference
+      const val = eval(name);
+      if (val !== undefined) {
+        globalThis[name] = val;
+      }
     } catch (e) {
-      console.debug(`__expose: failed to expose function ${name}`, e);
+      console.debug(`__expose: failed to expose ${name}`, e);
     }
   });
 </script>
@@ -4972,7 +5017,7 @@
           console.log(label + ' loaded from ' + url);
           return true;
         } catch (e) {
-          // try next
+          console.debug('tryLoadVariants: fetch failed for ' + url + ', trying next', e);
         }
       }
       console.log(label + ' not found via candidate paths, skipping');

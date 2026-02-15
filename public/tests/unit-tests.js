@@ -19,6 +19,18 @@
       alert('Unit tests require the app to be loaded. Open the app and run the tests there.');
       return;
     }
+    // Force local-only behavior so unit tests don't trigger network calls
+    try { if (typeof stopRealtimeWebSocket === 'function') stopRealtimeWebSocket(); } catch(e) { console.warn('Unit tests: stopRealtimeWebSocket failed', e); }
+    try { if (typeof games === 'undefined' || games === null) globalThis.games = {}; } catch(e) { console.warn('Unit tests: setting up global games failed', e); }
+    try {
+      if (!globalThis.currentGameId) {
+        globalThis.currentGameId = 'test-game-' + Date.now();
+        globalThis.games[globalThis.currentGameId] = { name: 'TEST', rounds: [], playerCreationOrder: [] };
+      }
+      globalThis.games[globalThis.currentGameId] = globalThis.games[globalThis.currentGameId] || { name: 'TEST', rounds: [], playerCreationOrder: [] };
+      globalThis.games[globalThis.currentGameId].localOnly = true;
+      try { if (typeof persistLocalGames === 'function') persistLocalGames(); } catch(e) { console.warn('Unit tests: persistLocalGames failed', e); }
+    } catch(e) { console.debug('Unit tests: failed to force local mode', e); }
     const results = [];
 
     // Test calculatePoints

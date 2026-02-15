@@ -80,7 +80,7 @@ app.post('/api/games', (req, res) => {
       .run(id, name, data, createdAt);
 
     res.status(201).json({ id, name, data: JSON.parse(data), createdAt });
-    try { if (typeof broadcast === 'function') broadcast({ type: 'games-updated' }); } catch (e) {}
+    try { if (typeof broadcast === 'function') broadcast({ type: 'games-updated' }); } catch (e) { console.warn('broadcast failed in POST /api/games', e); }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create game' });
@@ -110,7 +110,7 @@ app.put('/api/games/:id', (req, res) => {
       .run(id, name, data, createdAt);
 
     res.json({ id, name, data: JSON.parse(data), createdAt });
-    try { if (typeof broadcast === 'function') broadcast({ type: 'game-updated', id }); } catch (e) {}
+    try { if (typeof broadcast === 'function') broadcast({ type: 'game-updated', id }); } catch (e) { console.warn('broadcast failed in PUT /api/games/:id', e); }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update game' });
@@ -121,7 +121,7 @@ app.delete('/api/games/:id', (req, res) => {
   try {
     db.prepare('DELETE FROM games WHERE id = ?').run(req.params.id);
     res.status(204).end();
-    try { if (typeof broadcast === 'function') broadcast({ type: 'games-updated' }); } catch (e) {}
+    try { if (typeof broadcast === 'function') broadcast({ type: 'games-updated' }); } catch (e) { console.warn('broadcast failed in DELETE /api/games/:id', e); }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete game' });
@@ -144,7 +144,7 @@ app.post('/api/games/:id/rounds', (req, res) => {
 
     db.prepare('UPDATE games SET data = ? WHERE id = ?').run(JSON.stringify(data), id);
     res.status(201).json({ round });
-    try { if (typeof broadcast === 'function') broadcast({ type: 'game-updated', id }); } catch (e) {}
+    try { if (typeof broadcast === 'function') broadcast({ type: 'game-updated', id }); } catch (e) { console.warn('broadcast failed in POST /api/games/:id/rounds', e); }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to append round' });
@@ -172,7 +172,7 @@ function broadcast(msg) {
 }
 
 wss.on('connection', (socket) => {
-  try { socket.send(JSON.stringify({ type: 'connected' })); } catch (e) {}
+  try { socket.send(JSON.stringify({ type: 'connected' })); } catch (e) { console.warn('ws: failed to send connected message to socket', e); }
 });
 
 server.listen(PORT, () => {

@@ -13,6 +13,18 @@
       alert('Elimination tests require the app to be loaded. Open the app and run the tests there.');
       return;
     }
+    // Force local-only behavior so tests don't attempt network calls
+    try { if (typeof stopRealtimeWebSocket === 'function') stopRealtimeWebSocket(); } catch(e) { console.warn('Elimination tests: stopRealtimeWebSocket failed', e); }
+    try { if (typeof games === 'undefined' || games === null) globalThis.games = {}; } catch(e) { console.warn('Elimination tests: setting up global games failed', e); }
+    try {
+      if (!globalThis.currentGameId) {
+        globalThis.currentGameId = 'test-game-' + Date.now();
+        globalThis.games[globalThis.currentGameId] = { name: 'TEST', rounds: [], playerCreationOrder: [] };
+      }
+      globalThis.games[globalThis.currentGameId] = globalThis.games[globalThis.currentGameId] || { name: 'TEST', rounds: [], playerCreationOrder: [] };
+      globalThis.games[globalThis.currentGameId].localOnly = true;
+      try { if (typeof persistLocalGames === 'function') persistLocalGames(); } catch(e) { console.warn('Elimination tests: persistLocalGames failed', e); }
+    } catch(e) { console.debug('Elimination tests: failed to force local mode', e); }
     const results = [];
 
     // Test A: single player overshoots next 50 and is replaced by first in queue
@@ -146,16 +158,28 @@
       // Setup two rounds where player A reaches 25 on the second round
       players.active = ['A','B','C','D'];
       players.queue = ['Q1'];
-      globalThis.eliminationLevels = { A: 0 };
-      globalThis.elimination25Used = true; // assume it was set
+      // Initialize elimination state in module if possible
+      if (typeof eliminationLevels === 'object') {
+        Object.keys(eliminationLevels).forEach(k => delete eliminationLevels[k]);
+        Object.assign(eliminationLevels, { A: 0 });
+      } else {
+        globalThis.eliminationLevels = { A: 0 };
+      }
+      if (typeof setElimination25Used === 'function') setElimination25Used(true); else globalThis.elimination25Used = true;
 
-      globalThis.rounds = [
+      const roundsArr = [
         { players: ['A','B','C','D'], points: [24,0,0,0], cards: [0,0,0,0] },
         { players: ['A','B','C','D'], points: [1,0,0,0], cards: [0,0,0,0] }
       ];
+      if (typeof syncRoundsToModule === 'function') {
+        try { syncRoundsToModule(roundsArr); } catch (e) { console.warn('syncRoundsToModule failed', e); }
+      } else {
+        globalThis.rounds = roundsArr;
+      }
 
       // Simulate deleting the last round and recomputing (avoid confirm)
-      globalThis.rounds.pop();
+      if (typeof rounds !== 'undefined' && Array.isArray(rounds)) rounds.pop();
+      else if (globalThis.rounds && Array.isArray(globalThis.rounds)) globalThis.rounds.pop();
       const totalsObj = calculatePlayerTotals();
       const totals = totalsObj.playerTotals || {};
       const newElimLevels = {};
@@ -180,9 +204,15 @@
         if (used25) break;
       }
 
-      globalThis.eliminationLevels = newElimLevels;
-      globalThis.elimination25Used = !!used25;
-
+      try {
+        if (typeof eliminationLevels === 'object') {
+          Object.keys(eliminationLevels).forEach(k => delete eliminationLevels[k]);
+          Object.keys(newElimLevels).forEach(k => eliminationLevels[k] = newElimLevels[k]);
+        } else {
+          globalThis.eliminationLevels = newElimLevels;
+        }
+      } catch (e) { console.warn('Failed to set eliminationLevels', e); }
+      if (typeof setElimination25Used === 'function') setElimination25Used(!!used25); else globalThis.elimination25Used = !!used25;
       try {
         assertEqual(globalThis.elimination25Used, false, '25-rule should be unset after deleting the round that caused it');
         assertEqual(globalThis.eliminationLevels['A'], 0, 'A should have 0 elimination levels');
