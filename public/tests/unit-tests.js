@@ -13,6 +13,12 @@
   }
 
   function runUnitTestsExternal() {
+    // Ensure app functions are available
+    if (typeof calculatePoints !== 'function' || typeof reverseCalculateCards !== 'function' || typeof parseRoundData !== 'function' || typeof computeTotals !== 'function' || typeof computeCumulativeSnapshots !== 'function') {
+      console.warn('Unit tests require app utility functions to be present (calculatePoints, parseRoundData, etc.). Run from the app.');
+      alert('Unit tests require the app to be loaded. Open the app and run the tests there.');
+      return;
+    }
     const results = [];
 
     // Test calculatePoints
@@ -64,7 +70,7 @@
         assertEqual(playerRounds['A'], 2, 'rounds A');
         assertEqual(playerAverages['B'], 6, 'avg B');
         results.push('computeTotals tests passed');
-      } catch (e) { results.push('computeTotals failed: '+e.message); }
+      } catch (e) { results.push('computeTotals tests failed: '+e.message); }
     })();
 
     // Test computeCumulativeSnapshots
@@ -80,7 +86,7 @@
         assertDeepEqual(snaps[0], { A:2, B:3 }, 'snapshot 1');
         assertDeepEqual(snaps[1], { A:3, B:7 }, 'snapshot 2');
         results.push('computeCumulativeSnapshots tests passed');
-      } catch (e) { results.push('computeCumulativeSnapshots failed: '+e.message); }
+      } catch (e) { results.push('computeCumulativeSnapshots tests failed: '+e.message); }
     })();
 
     console.log('Unit tests results:', results);

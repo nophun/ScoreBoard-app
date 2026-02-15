@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Card Game Scores</title>
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#1976d2">
-  <link rel="icon" href="/icons/favicon.ico" type="image/x-icon">
+  <link rel="icon" href="icons/favicon.ico" type="image/x-icon">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
     body { 
@@ -1855,6 +1855,8 @@
   let eliminationLevels = {};
   // Has the one-time 25-point elimination been used for the current game?
   let elimination25Used = false;
+  // Internal flag to prevent duplicate alerts when onblur triggers savePlayerName again
+  let _suppressDuplicateAlert = false;
   // Last replacements captured for modal display
   let lastReplacements = [];
 
@@ -2242,8 +2244,16 @@
     // Check for duplicate names
     const allPlayerNames = [...players.active.filter(p => p !== null), ...players.queue];
     if (allPlayerNames.includes(newName)) {
-      alert('A player with this name already exists');
-      input.focus();
+      // Duplicate detected — show alert once, then revert to original name and close editor
+      try {
+        if (!_suppressDuplicateAlert) {
+          _suppressDuplicateAlert = true;
+          try { alert('A player with this name already exists'); } catch (e) { console.warn('Failed to show duplicate name alert', e); }
+          // Clear suppression on next tick so subsequent edits still alert normally
+          setTimeout(() => { _suppressDuplicateAlert = false; }, 0);
+        }
+      } catch (e) { console.warn('Duplicate name alert error', e); }
+      try { cancelEditPlayerName(originalName, playerType, index); } catch (e) { console.warn('Failed to cancel edit after duplicate name', e); }
       return;
     }
     
@@ -3498,14 +3508,42 @@
           <div class="game-actions" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
             <div style="color:#666; text-align:right; margin-right:8px; font-size:12px;">${createdText}</div>
             ${game && game.localOnly ? '<span class="offline-badge" title="Stored locally">Local</span>' : ''}
-            ${game && game.localOnly ? '<button class="btn-small" data-server-action="true" onclick="syncLocalGameToServer(\'' + gameId + '\')" style="background: #28a745; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Sync</button>' : ''}
+            ${game && game.localOnly && serverAvailable ? '<button class="btn-small" data-server-action="true" onclick="syncLocalGameToServer(\'' + gameId + '\')" style="background: #28a745; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Sync</button>' : ''}
+            <button class="btn-small" onclick="editGameName('${gameId}')" style="background: #007bff; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Edit</button>
             <button class="btn-small" onclick="deleteGame('${gameId}')" style="background: #dc3545; color: white; padding: 8px 16px; font-size: 14px;">Delete</button>
           </div>
         </div>
       `;
-      
+
       gamesManagementList.appendChild(gameItem);
     });
+  }
+
+  // Edit a game's name. Uses a prompt for simplicity and persists the change.
+  function editGameName(gameId) {
+    const game = games[gameId];
+    if (!game) { alert('Game not found'); return; }
+    const current = game.name || '';
+    const newName = prompt('Enter new name for game:', current);
+    if (newName === null) return; // cancelled
+    const trimmed = String(newName).trim();
+    if (!trimmed) { alert('Please enter a game name'); return; }
+    // Check for duplicates
+    for (const [id, g] of Object.entries(games)) {
+      if (id !== gameId && g && g.name === trimmed) {
+        alert('A game with this name already exists');
+        return;
+      }
+    }
+    game.name = trimmed;
+    try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+    // Attempt remote save; saveGame will fallback to local persist if needed
+    saveGame(gameId).catch(() => {});
+    renderGamesManagement();
+    if (currentGameId === gameId) {
+      const el = document.getElementById('gameTitle');
+      if (el) el.textContent = trimmed;
+    }
   }
 
   function switchToGameAndView(gameId) {
@@ -4904,7 +4942,7 @@
     'toggleSidebar','closeSidebar','showGame','showPlayers','showStatistics','showHistory',
     'showNewGame','showGamesManagement','showAddRoundModal','closeAddRoundModal','confirmRound','deleteLastRound','addPlayer','addPlayerInput',
     'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame','savePlayerName',
-    'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName',
+    'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName',
     'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
     'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer'
   ];
@@ -4919,32 +4957,34 @@
 </script>
 <script>
   (function(){
-    const url = 'tests/elimination-tests.js';
-    const s = document.createElement('script');
-    s.src = url;
-    s.onload = function() { console.log('elimination-tests.js loaded'); };
-    s.onerror = function() { console.log('elimination-tests.js not found, skipping tests'); s.remove(); };
-    document.body.appendChild(s);
-  })();
-</script>
-<script>
-  (function(){
-    const url = 'tests/unit-tests.js';
-    const s = document.createElement('script');
-    s.src = url;
-    s.onload = function() { console.log('unit-tests.js loaded'); };
-    s.onerror = function() { console.log('unit-tests.js not found, skipping unit tests'); s.remove(); };
-    document.body.appendChild(s);
-  })();
-</script>
-<script>
-  (function(){
-    const url = 'tests/integration-tests.js';
-    const s = document.createElement('script');
-    s.src = url;
-    s.onload = function() { console.log('integration-tests.js loaded'); };
-    s.onerror = function() { console.log('integration-tests.js not found, skipping integration tests'); s.remove(); };
-    document.body.appendChild(s);
+    async function tryLoadVariants(label, candidates) {
+      for (const url of candidates) {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) continue;
+          const text = await resp.text();
+          if (!text) continue;
+          const t = String(text).trim();
+          if (!t || t[0] === '<') continue; // looks like HTML
+          const s = document.createElement('script');
+          s.text = text;
+          document.body.appendChild(s);
+          console.log(label + ' loaded from ' + url);
+          return true;
+        } catch (e) {
+          // try next
+        }
+      }
+      console.log(label + ' not found via candidate paths, skipping');
+      return false;
+    }
+
+    const baseCandidates = ['tests/'];
+    function candidatesFor(name) { return baseCandidates.map(p => p + name); }
+
+    tryLoadVariants('elimination-tests.js', candidatesFor('elimination-tests.js'));
+    tryLoadVariants('unit-tests.js', candidatesFor('unit-tests.js'));
+    tryLoadVariants('integration-tests.js', candidatesFor('integration-tests.js'));
   })();
 </script>
 
@@ -4962,7 +5002,8 @@
   let deferredPrompt = null;
   const installBtn = document.getElementById('installBtn');
   globalThis.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
+    // Note: do not call e.preventDefault() here to avoid a console warning
+    // if prompt() is never called. Store the event for manual prompting
     deferredPrompt = e;
     if (installBtn) installBtn.style.display = 'block';
   });

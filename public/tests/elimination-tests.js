@@ -7,6 +7,12 @@
   }
 
   function runEliminationTestsExternal() {
+    // Ensure app environment is available
+    if (typeof players === 'undefined' || typeof parseRoundData !== 'function' || typeof calculatePlayerTotals !== 'function') {
+      console.warn('Elimination tests require the app environment (players, parseRoundData, calculatePlayerTotals). Run these tests from the running app.');
+      alert('Elimination tests require the app to be loaded. Open the app and run the tests there.');
+      return;
+    }
     const results = [];
 
     // Test A: single player overshoots next 50 and is replaced by first in queue

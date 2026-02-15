@@ -44,6 +44,12 @@
   }
 
   function runIntegrationTestsExternal() {
+    // Ensure integration targets are present in the app
+    if (typeof confirmRound !== 'function' || typeof deleteLastRound !== 'function' || typeof createNewGameWithPlayers !== 'function') {
+      console.warn('Integration tests require interactive app functions (confirmRound, deleteLastRound, createNewGameWithPlayers). Run from the running app.');
+      alert('Integration tests require the app to be loaded. Open the app and run the tests there.');
+      return;
+    }
     const results = [];
 
     // Test 1: confirmRound replacement flow
