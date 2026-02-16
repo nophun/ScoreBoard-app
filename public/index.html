@@ -3607,6 +3607,7 @@
       renderGameList();
       renderPlayers(); // Update player management view
       render();
+      
     }
   }
 
@@ -4246,6 +4247,10 @@
   }
   
   function renderStatistics() {
+    try {
+      const statsTitleEl = document.getElementById('statisticsTitle');
+      if (statsTitleEl) statsTitleEl.textContent = games[currentGameId]?.name + ' - Statistics' || 'Game Statistics';
+    } catch (e) { console.warn('renderStatistics: failed to update statistics title', e); }
     const stats = calculateStatistics();
     const tbody = document.getElementById('statisticsTableBody');
     tbody.innerHTML = '';
