@@ -1,0 +1,15 @@
+[Unit]
+Description=ScoreBoard App (Node.js)
+After=network.target
+
+[Service]
+Environment=NODE_ENV=production
+WorkingDirectory=/home/noserver/score-app/
+ExecStart=/usr/bin/node /home/noserver/score-app/server.js
+Restart=always
+RestartSec=5
+# Change 'pi' to the appropriate user if needed
+User=noserver
+
+[Install]
+WantedBy=multi-user.target
