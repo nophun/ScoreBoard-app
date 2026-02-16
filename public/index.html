@@ -333,6 +333,36 @@
       max-height: 80vh;
       overflow: auto;
     }
+
+    /* Back-button toast */
+    #backToast {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 18px;
+      z-index: 3000;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 180ms ease-in-out;
+    }
+    /* Small debug indicator for popstate events */
+    #backDebug {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: rgba(0,0,0,0.75);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      z-index: 99999;
+      display: none;
+      pointer-events: none;
+    }
     
     .modal-header {
       display: flex;
@@ -4517,12 +4547,59 @@
       const modalIds = ['addRoundModal', 'genericEditModal', 'replacementModal'];
       for (const id of modalIds) {
         const m = document.getElementById(id);
-        if (m && m.style.display === 'block') {
+        if (m && (m.style.display === 'block' || m.style.display === 'flex')) {
           m.style.display = 'none';
           // clear any editing state
           if (id === 'genericEditModal') globalThis._genericEdit = null;
           return;
         }
+      }
+
+      // No modal was open — handle view navigation and double-back-to-exit on root.
+      const state = ev && ev.state ? ev.state : (history.state || null);
+      const targetView = state && state.view ? state.view : null;
+      // If this was our dummy trap state, handle intelligently:
+      // - If the user was not already on the game view (i.e. they are returning from deeper navigation),
+      //   navigate to the game view instead of showing the toast.
+      // - If the user is already on the game view, show the toast.
+      if (state && state.dummy) {
+        const currentViewNow = (typeof getCurrentView === 'function') ? getCurrentView() : null;
+        if (currentViewNow && currentViewNow !== 'game') {
+          try { showGame(); } catch (e) { console.warn('popstate: failed to navigate to game on dummy state', e); }
+          return;
+        }
+        const now = Date.now();
+        globalThis._backWarningTime = now;
+        try { showBackToast('Press back again to exit'); } catch (e) { console.warn('popstate: showBackToast failed', e); }
+        try { history.pushState({ view: 'game', root: true }, ''); } catch (e) { console.warn('popstate: history.pushState failed', e); }
+        return;
+      }
+      const current = (typeof getCurrentView === 'function') ? getCurrentView() : null;
+
+      // If the popped state contains a view and it's different from current, navigate to it
+      if (targetView && targetView !== current) {
+        try {
+          if (targetView === 'game') showGame();
+          else if (targetView === 'players') showPlayers();
+          else if (targetView === 'history') showHistory();
+          else if (targetView === 'statistics') showStatistics();
+          else if (targetView === 'newgame') showNewGame();
+          else if (targetView === 'games') showGamesManagement();
+        } catch (e) { console.warn('popstate: failed to navigate to view', targetView, e); }
+        return;
+      }
+
+      // If we're on the main game view and there's no previous view to go to,
+      // implement "press back twice to exit" behavior: on first back show a toast
+      // and re-push the game state; on second within timeframe allow navigation.
+      if (current === 'game') {
+        const now = Date.now();
+        if (!globalThis._backWarningTime || (now - globalThis._backWarningTime) > 2000) {
+          globalThis._backWarningTime = now;
+          try { showBackToast('Press back again to exit'); } catch (e) { console.warn('popstate: showBackToast failed', e); }
+          return;
+        }
+        // second back within timeframe — allow default behavior (do nothing)
       }
     } catch (err) { console.warn('popstate handler failed', err); }
   });
@@ -4547,6 +4624,47 @@
       }
     } catch (err) { console.warn('Modal overlay click handler failed', err); }
   });
+
+  // Helper: push a view state onto history (used for SPA navigation)
+  function pushViewState(view) {
+    try {
+      if (!history.state || history.state.view !== view) {
+        history.pushState({ view: view }, '');
+      }
+    } catch (e) { console.warn('pushViewState failed', e); }
+  }
+
+  // Small toast to notify user about back-to-exit behavior
+  function showBackToast(msg) {
+    try {
+      let t = document.getElementById('backToast');
+      if (!t) {
+        t = document.createElement('div');
+        t.id = 'backToast';
+        document.body.appendChild(t);
+      }
+      t.textContent = msg || 'Press back again to exit';
+      t.style.opacity = '1';
+      setTimeout(() => { try { t.style.opacity = '0'; } catch (e) { console.warn('showBackToast: fade failed', e); } }, 1600);
+    } catch (e) { console.warn('showBackToast failed', e); }
+  }
+
+  // Visual debug indicator for popstate/back handling
+  function showDebugIndicator(msg, timeout = 1800) {
+    try {
+      let el = document.getElementById('backDebug');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'backDebug';
+        document.body.appendChild(el);
+      }
+      el.textContent = String(msg || 'popstate');
+      el.style.display = 'block';
+      el.style.opacity = '1';
+      setTimeout(() => { try { el.style.opacity = '0'; } catch (e) { console.warn('showDebugIndicator: fade failed', e); } }, timeout - 300);
+      setTimeout(() => { try { el.style.display = 'none'; } catch (e) { console.warn('showDebugIndicator: hide failed', e); } }, timeout);
+    } catch (e) { console.warn('showDebugIndicator failed', e); }
+  }
 
   function showHistory() {
     switchView('historyView');
@@ -4577,6 +4695,7 @@
   function showGamesManagement() {
     switchView('gamesManagementView');
     renderGamesManagement();
+    try { pushViewState('games'); } catch (e) { console.warn('showGamesManagement: pushViewState failed', e); }
     closeSidebar();
   }
   // Helpers to split confirmRound logic for readability and testability
@@ -5014,6 +5133,13 @@
       showNoGames();
     }
   } catch (e) { console.warn('updateServerActionStates call failed', e); }
+  try {
+    // Set initial history state to current view so back navigation works predictably
+    const initialView = (typeof getCurrentView === 'function') ? getCurrentView() : 'game';
+    history.replaceState({ view: initialView, root: true }, '');
+    // Push a dummy trap state so pressing back once triggers popstate instead of leaving the app
+    try { history.pushState({ view: initialView, dummy: true }, ''); } catch (e) { console.warn('initial history.pushState failed', e); }
+  } catch (e) { console.warn('initial history.replaceState failed', e); }
   // When online, merge any locally stored `localOnly` games so they remain visible
   if (serverAvailable) {
     try {
@@ -5131,26 +5257,31 @@
   
   showGame = function() {
     originalShowGame();
+    try { pushViewState('game'); } catch (e) { console.warn('showGame: pushViewState failed', e); }
     if (window.innerWidth <= 768) closeSidebar();
   };
   
   showPlayers = function() {
     originalShowPlayers();
+    try { pushViewState('players'); } catch (e) { console.warn('showPlayers: pushViewState failed', e); }
     if (window.innerWidth <= 768) closeSidebar();
   };
   
   showStatistics = function() {
     originalShowStatistics();
+    try { pushViewState('statistics'); } catch (e) { console.warn('showStatistics: pushViewState failed', e); }
     if (window.innerWidth <= 768) closeSidebar();
   };
   
   showHistory = function() {
     originalShowHistory();
+    try { pushViewState('history'); } catch (e) { console.warn('showHistory: pushViewState failed', e); }
     if (window.innerWidth <= 768) closeSidebar();
   };
   
   showNewGame = function() {
     originalShowNewGame();
+    try { pushViewState('newgame'); } catch (e) { console.warn('showNewGame: pushViewState failed', e); }
     if (window.innerWidth <= 768) closeSidebar();
   };
 
