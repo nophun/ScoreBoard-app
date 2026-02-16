@@ -4383,6 +4383,13 @@
   function showAddRoundModal() {
     const modal = document.getElementById("addRoundModal");
     modal.style.display = "block";
+    // Push a history state so the back button can close the modal instead
+    try {
+      if (!history.state || history.state.modal !== 'addRound') {
+        history.pushState({ modal: 'addRound' }, '');
+        globalThis._addRoundStatePushed = true;
+      }
+    } catch (e) { console.warn('showAddRoundModal: history.pushState failed', e); }
     
     // Update labels with actual player names
     const labels = modal.querySelectorAll('label[for^="p"]');
@@ -4410,7 +4417,27 @@
     // Prevent closing while a round save is in progress
     if (globalThis._addingRound) return;
     document.getElementById("addRoundModal").style.display = "none";
+    // If we previously pushed a history state for the modal, remove it so
+    // subsequent back presses don't attempt to re-open or double-close it.
+    try {
+      if (history.state && history.state.modal === 'addRound') {
+        history.back();
+      }
+    } catch (e) { console.warn('closeAddRoundModal: history.back failed', e); }
   }
+
+  // When the user presses the browser back button, if the add-round modal
+  // is open we should close it instead of navigating away.
+  window.addEventListener('popstate', function (ev) {
+    try {
+      const modal = document.getElementById('addRoundModal');
+      if (modal && modal.style.display === 'block') {
+        // Close modal; history already moved by back action.
+        modal.style.display = 'none';
+        return;
+      }
+    } catch (err) { console.warn('popstate handler failed', err); }
+  });
 
   function showHistory() {
     switchView('historyView');
