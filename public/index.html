@@ -148,25 +148,53 @@
       border-color: #007acc;
     }
     
+    /* Consolidated game-info styles */
     .game-info {
       flex: 1;
       cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0; /* allow truncation in flex layouts */
     }
-    
+
     .game-info-name {
       font-weight: 600;
       font-size: 16px;
       color: #333;
-      margin-bottom: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      line-height: 1.1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    
+
     .games-management-item.active .game-info-name {
       color: #007acc;
     }
-    
+
     .game-info-details {
-      font-size: 13px;
+      font-size: 12px;
       color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .game-info-created {
+      font-size: 12px;
+      color: #666;
+      text-align: left;
+    }
+
+    .game-info-name .offline-badge { margin-left: 8px; font-size: 12px; vertical-align: baseline; }
+
+    @media (max-width: 480px) {
+      .game-info { align-items: flex-start; }
+      .games-management-item { align-items: flex-start; }
+      .game-info-details { white-space: normal; }
     }
     
     .new-game-form {
@@ -1211,7 +1239,7 @@
     .conn-indicator.offline { background: #dc3545; }
     .offline-badge {
       display: inline-block;
-      margin-left: auto;
+      margin-left: 0;
       font-size: 11px;
       padding: 2px 6px;
       border-radius: 8px;
@@ -3535,14 +3563,13 @@
       const createdText = game.createdAt ? formatTimestamp(game.createdAt) : '';
 
       gameItem.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; box-sizing:border-box;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; width:100%; box-sizing:border-box;">
           <div class="game-info" onclick="switchToGameAndView('${gameId}')" style="flex:1; min-width:0;">
-            <div class="game-info-name">${game.name}</div>
+            <div class="game-info-name">${game.name}${game && game.localOnly ? ' <span class="offline-badge" title="Stored locally">Local</span>' : ''}</div>
             <div class="game-info-details">${totalPlayers} players • ${totalRounds} rounds</div>
+            <div class="game-info-created">${createdText}</div>
           </div>
           <div class="game-actions" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
-            <div style="color:#666; text-align:right; margin-right:8px; font-size:12px;">${createdText}</div>
-            ${game && game.localOnly ? '<span class="offline-badge" title="Stored locally">Local</span>' : ''}
             ${game && game.localOnly && serverAvailable ? '<button class="btn-small" data-server-action="true" onclick="syncLocalGameToServer(\'' + gameId + '\')" style="background: #28a745; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Sync</button>' : ''}
             <button class="btn-small" onclick="editGameName('${gameId}')" style="background: #007bff; color: white; padding: 8px 16px; font-size: 14px; margin-right:8px;">Edit</button>
             <button class="btn-small" onclick="deleteGame('${gameId}')" style="background: #dc3545; color: white; padding: 8px 16px; font-size: 14px;">Delete</button>
@@ -5000,47 +5027,49 @@
     }
   });
 </script>
-<script>
-  (function(){
-    async function tryLoadVariants(label, candidates) {
-      for (const url of candidates) {
-        try {
-          const resp = await fetch(url);
-          if (!resp.ok) continue;
-          const text = await resp.text();
-          if (!text) continue;
-          const t = String(text).trim();
-          if (!t || t[0] === '<') continue; // looks like HTML
-          const s = document.createElement('script');
-          s.text = text;
-          document.body.appendChild(s);
-          console.log(label + ' loaded from ' + url);
-          return true;
-        } catch (e) {
-          console.debug('tryLoadVariants: fetch failed for ' + url + ', trying next', e);
-        }
+<script type="module">
+  async function tryLoadVariants(label, candidates) {
+    for (const url of candidates) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) continue;
+        const text = await resp.text();
+        if (!text) continue;
+        const t = String(text).trim();
+        if (!t || t[0] === '<') continue; // looks like HTML
+        const s = document.createElement('script');
+        s.text = text;
+        document.body.appendChild(s);
+        console.log(label + ' loaded from ' + url);
+        return true;
+      } catch (e) {
+        console.debug('tryLoadVariants: fetch failed for ' + url + ', trying next', e);
       }
-      console.log(label + ' not found via candidate paths, skipping');
-      return false;
     }
+    console.log(label + ' not found via candidate paths, skipping');
+    return false;
+  }
 
-    const baseCandidates = ['tests/'];
-    function candidatesFor(name) { return baseCandidates.map(p => p + name); }
+  const baseCandidates = ['tests/'];
+  function candidatesFor(name) { return baseCandidates.map(p => p + name); }
 
-    tryLoadVariants('elimination-tests.js', candidatesFor('elimination-tests.js'));
-    tryLoadVariants('unit-tests.js', candidatesFor('unit-tests.js'));
-    tryLoadVariants('integration-tests.js', candidatesFor('integration-tests.js'));
-  })();
+  // Load test variants sequentially using top-level await so failures are visible
+  await tryLoadVariants('elimination-tests.js', candidatesFor('elimination-tests.js'));
+  await tryLoadVariants('unit-tests.js', candidatesFor('unit-tests.js'));
+  await tryLoadVariants('integration-tests.js', candidatesFor('integration-tests.js'));
 </script>
 
 <!-- PWA install button and service worker registration -->
 <button id="installBtn" style="display:none;position:fixed;right:16px;bottom:16px;z-index:2000" class="btn-large bg-blue">Install</button>
-<script>
-  // Service worker registration
+<script type="module">
+  // Service worker registration — use top-level await for clarity
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/service-worker.js').then(reg => {
+    try {
+      const reg = await navigator.serviceWorker.register('/service-worker.js');
       console.log('ServiceWorker registered', reg);
-    }).catch(err => console.warn('SW register failed', err));
+    } catch (err) {
+      console.warn('SW register failed', err);
+    }
   }
 
   // beforeinstallprompt handling for showing an install button
