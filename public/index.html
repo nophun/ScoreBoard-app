@@ -1396,7 +1396,8 @@
       
       .modal-content {
         width: 95%;
-        margin: 5% auto;
+        /* push modal lower to avoid fixed mobile header overlapping */
+        margin: calc(5% + 72px) auto 5% auto;
         margin-left: auto;
         transform: none;
       }
@@ -1857,6 +1858,24 @@
     </div>
   </div>
 
+    <!-- Generic Edit Modal (reusable for player or game names) -->
+    <div id="genericEditModal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="genericEditTitle">Edit</h3>
+          <button type="button" class="close" onclick="cancelGenericEditModal()" aria-label="Close modal">&times;</button>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label id="genericEditLabel" for="genericEditInput">Value:</label>
+          <input type="text" id="genericEditInput" class="form-input" maxlength="120" style="margin-top:6px; width:100%; box-sizing:border-box;" onkeypress="if(event.key==='Enter'){confirmGenericEditModal();} else if(event.key==='Escape'){cancelGenericEditModal();}">
+        </div>
+        <div style="text-align:right; margin-top:8px;">
+          <button class="btn-large bg-grey" onclick="cancelGenericEditModal()">Cancel</button>
+          <button class="btn-large bg-blue" onclick="confirmGenericEditModal()">Save</button>
+        </div>
+      </div>
+    </div>
+
 <script type="module">
   const GAMES_STORAGE_KEY = "cardgame-games";
 
@@ -2251,28 +2270,10 @@
   }
 
   function editPlayerName(currentName, playerType, index) {
-    const elementId = playerType === 'active' ? `activeName_${index}` : `queueName_${index}`;
-    const nameElement = document.getElementById(elementId);
-    
-    if (!nameElement) return;
-    
-    // Replace name with input field
-    nameElement.innerHTML = `
-      <input type="text" 
-             id="editInput_${playerType}_${index}" 
-             value="${currentName}" 
-             class="edit-name-input"
-             maxlength="20"
-             onblur="savePlayerName('${currentName}', '${playerType}', ${index})"
-             onkeypress="handleEditKeyPress(event, '${currentName}', '${playerType}', ${index})">
-    `;
-    
-    // Focus and select the input
-    const input = document.getElementById(`editInput_${playerType}_${index}`);
-    if (input) {
-      input.focus();
-      input.select();
-    }
+    // Open generic modal to edit player name
+    try {
+      openGenericEditModal('player', { playerType: playerType, index: index, originalName: currentName || '' });
+    } catch (e) { console.warn('editPlayerName: failed to open modal', e); }
   }
   
   function handleEditKeyPress(event, originalName, playerType, index) {
@@ -2337,6 +2338,95 @@
   
   function cancelEditPlayerName(originalName, playerType, index) {
     renderPlayers();
+  }
+  // Generic edit modal handlers
+  function openGenericEditModal(kind, data) {
+    try {
+      globalThis._genericEdit = { kind: kind, data: data };
+      const titleEl = document.getElementById('genericEditTitle');
+      const labelEl = document.getElementById('genericEditLabel');
+      const input = document.getElementById('genericEditInput');
+      if (kind === 'player') {
+        titleEl.textContent = 'Edit Player Name';
+        labelEl.textContent = 'Player name:';
+        input.value = data.originalName || '';
+      } else if (kind === 'game') {
+        titleEl.textContent = 'Edit Game Name';
+        labelEl.textContent = 'Game name:';
+        input.value = data.originalName || '';
+      } else {
+        titleEl.textContent = 'Edit';
+        labelEl.textContent = 'Value:';
+        input.value = data && data.originalName ? data.originalName : '';
+      }
+      setTimeout(() => { input.focus(); input.select(); }, 50);
+      const modal = document.getElementById('genericEditModal'); if (modal) modal.style.display = 'block';
+      // push history state so back button closes the modal
+      try {
+        if (!history.state || history.state.modal !== 'genericEdit') {
+          history.pushState({ modal: 'genericEdit', sub: kind }, '');
+          globalThis._genericEditStatePushed = true;
+        }
+      } catch (e) { console.warn('openGenericEditModal: history.pushState failed', e); }
+    } catch (e) { console.warn('openGenericEditModal failed', e); }
+  }
+
+  function confirmGenericEditModal() {
+    try {
+      const state = globalThis._genericEdit || null;
+      if (!state) return cancelGenericEditModal();
+      const input = document.getElementById('genericEditInput');
+      if (!input) return cancelGenericEditModal();
+      const newVal = String(input.value || '').trim();
+      if (!newVal) {
+        if (state.kind === 'game') { alert('Please enter a game name'); } else { alert('Player name cannot be empty'); }
+        input.focus();
+        return;
+      }
+
+      if (state.kind === 'player') {
+        const { playerType, index, originalName } = state.data;
+        if (newVal === originalName) { cancelGenericEditModal(); return; }
+        const allNames = [];
+        players.active.forEach((p, i) => { if (p !== null && !(playerType === 'active' && i === index)) allNames.push(p); });
+        players.queue.forEach((p, i) => { if (!(playerType === 'queue' && i === index)) allNames.push(p); });
+        if (allNames.includes(newVal)) { alert('A player with this name already exists'); return; }
+        if (playerType === 'active') players.active[index] = newVal; else players.queue[index] = newVal;
+        try { saveCurrentGame(); } catch (e) { console.warn('saveCurrentGame failed', e); }
+        renderPlayers();
+        updateGameDisplay();
+      } else if (state.kind === 'game') {
+        const { gameId, originalName } = state.data;
+        if (!games[gameId]) { alert('Game not found'); cancelGenericEditModal(); return; }
+        if (newVal === originalName) { cancelGenericEditModal(); return; }
+        for (const [id, g] of Object.entries(games)) {
+          if (id !== gameId && g && g.name === newVal) { alert('A game with this name already exists'); return; }
+        }
+        games[gameId].name = newVal;
+        try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+        // Persist the game's metadata and handle failures explicitly.
+        saveGame(gameId, false).catch(err => {
+          console.warn('saveGame failed', err);
+          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+        });
+        renderGamesManagement();
+        if (currentGameId === gameId) { const el = document.getElementById('gameTitle'); if (el) el.textContent = newVal; }
+      }
+
+      // Close modal and cleanup history state
+      const modal = document.getElementById('genericEditModal'); if (modal) modal.style.display = 'none';
+      try { if (history.state && history.state.modal === 'genericEdit') history.back(); } catch (e) { console.warn('confirmGenericEditModal: history.back failed', e); }
+      globalThis._genericEdit = null;
+    } catch (e) { console.warn('confirmGenericEditModal failed', e); }
+  }
+
+  function cancelGenericEditModal() {
+    try {
+      const modal = document.getElementById('genericEditModal'); if (modal) modal.style.display = 'none';
+      try { if (history.state && history.state.modal === 'genericEdit') history.back(); } catch (e) { console.warn('cancelGenericEditModal: history.back failed', e); }
+      globalThis._genericEdit = null;
+      renderPlayers();
+    } catch (e) { console.warn('cancelGenericEditModal failed', e); }
   }
 
   function activatePlayerToSeat(playerName, seatIndex) {
@@ -3176,7 +3266,18 @@
       games[currentGameId].eliminationLevels = {...eliminationLevels};
       // Persist 25-point elimination flag
       games[currentGameId].elimination25Used = !!elimination25Used;
-      if (alwaysPersist) saveGames();
+      if (alwaysPersist) {
+        try {
+          // Persist only the current game's metadata to avoid sending all games
+          saveGame(currentGameId, false).catch(err => {
+            console.warn('saveCurrentGame: saveGame failed, falling back to local persist', err);
+            try { persistLocalGames(); } catch (err) { console.warn('persistLocalGames failed', err); }
+          });
+        } catch (e) {
+          console.warn('saveCurrentGame: unexpected synchronous error while saving current game, falling back to local persist', e);
+          try { persistLocalGames(); } catch (err) { console.warn('persistLocalGames failed', err); }
+        }
+      }
     }
   }
 
@@ -3585,27 +3686,9 @@
   function editGameName(gameId) {
     const game = games[gameId];
     if (!game) { alert('Game not found'); return; }
-    const current = game.name || '';
-    const newName = prompt('Enter new name for game:', current);
-    if (newName === null) return; // cancelled
-    const trimmed = String(newName).trim();
-    if (!trimmed) { alert('Please enter a game name'); return; }
-    // Check for duplicates
-    for (const [id, g] of Object.entries(games)) {
-      if (id !== gameId && g && g.name === trimmed) {
-        alert('A game with this name already exists');
-        return;
-      }
-    }
-    game.name = trimmed;
-    try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
-    // Attempt remote save; saveGame will fallback to local persist if needed
-    saveGame(gameId).catch(() => {});
-    renderGamesManagement();
-    if (currentGameId === gameId) {
-      const el = document.getElementById('gameTitle');
-      if (el) el.textContent = trimmed;
-    }
+    try {
+      openGenericEditModal('game', { gameId: gameId, originalName: game.name || '' });
+    } catch (e) { console.warn('editGameName: failed to open modal', e); }
   }
 
   function switchToGameAndView(gameId) {
@@ -4428,15 +4511,41 @@
 
   // When the user presses the browser back button, if the add-round modal
   // is open we should close it instead of navigating away.
-  window.addEventListener('popstate', function (ev) {
+  globalThis.addEventListener('popstate', function (ev) {
     try {
-      const modal = document.getElementById('addRoundModal');
-      if (modal && modal.style.display === 'block') {
-        // Close modal; history already moved by back action.
-        modal.style.display = 'none';
-        return;
+      // If any of our known modals are open, close the top-most one.
+      const modalIds = ['addRoundModal', 'genericEditModal', 'replacementModal'];
+      for (const id of modalIds) {
+        const m = document.getElementById(id);
+        if (m && m.style.display === 'block') {
+          m.style.display = 'none';
+          // clear any editing state
+          if (id === 'genericEditModal') globalThis._genericEdit = null;
+          return;
+        }
       }
     } catch (err) { console.warn('popstate handler failed', err); }
+  });
+
+  // Close modal when clicking on the overlay (outside modal-content)
+  document.addEventListener('click', function (ev) {
+    try {
+      const target = ev.target;
+      if (!target || !target.classList) return;
+      if (!target.classList.contains('modal')) return;
+      // clicked on modal overlay
+      const id = target.id;
+      if (id === 'addRoundModal') {
+        closeAddRoundModal();
+      } else if (id === 'genericEditModal') {
+        cancelGenericEditModal();
+      } else if (id === 'replacementModal') {
+        closeReplacementModal();
+      } else {
+        // generic: hide it
+        try { target.style.display = 'none'; } catch (e) { console.warn('Modal overlay click: failed to hide target', e); }
+      }
+    } catch (err) { console.warn('Modal overlay click handler failed', err); }
   });
 
   function showHistory() {
@@ -4741,12 +4850,31 @@
       }).join('');
     }
     const modal = document.getElementById('replacementModal');
-    if (modal) modal.style.display = 'block';
+    if (modal) {
+      console.log('showReplacementModal: opening replacement modal, entries=', replacements.length);
+      // Force a centered overlay so it is visible on all screens
+      try {
+        modal.style.display = 'flex';
+        modal.style.alignItems = 'center';
+        modal.style.justifyContent = 'center';
+        modal.style.zIndex = '2000';
+      } catch (e) { console.warn('showReplacementModal: failed to apply styles to modal', e); }
+      try { modal.setAttribute('tabindex', '-1'); modal.focus(); } catch (e) { console.warn('showReplacementModal: failed to focus modal', e); }
+      try {
+        if (!history.state || history.state.modal !== 'replacement') {
+          history.pushState({ modal: 'replacement' }, '');
+          globalThis._replacementStatePushed = true;
+        }
+      } catch (e) { console.warn('showReplacementModal: history.pushState failed', e); }
+    }
   }
 
   function closeReplacementModal() {
     const modal = document.getElementById('replacementModal');
     if (modal) modal.style.display = 'none';
+    try {
+      if (history.state && history.state.modal === 'replacement') history.back();
+    } catch (e) { console.warn('closeReplacementModal: history.back failed', e); }
   }
 
   // Handle Enter key in new game input
@@ -5033,7 +5161,7 @@
     'toggleSidebar','closeSidebar','showGame','showPlayers','showStatistics','showHistory',
     'showNewGame','showGamesManagement','showAddRoundModal','closeAddRoundModal','confirmRound','deleteLastRound','addPlayer','addPlayerInput',
     'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame','savePlayerName',
-    'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName',
+    'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName','openGenericEditModal','confirmGenericEditModal','cancelGenericEditModal','genericEditModal',
     'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
     'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
     // Expose runtime state and helper functions so tests can run against the live app
