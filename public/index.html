@@ -4926,7 +4926,13 @@
           try { const overlay = document.getElementById('addRoundOverlay'); if (overlay) overlay.style.display = 'none'; } catch (e) { console.warn('Failed to hide addRoundOverlay', e); }
           resetRoundForm('zero');
           closeAddRoundModal();
-          if (lastReplacements && lastReplacements.length > 0) showReplacementModal(lastReplacements);
+          if (lastReplacements && lastReplacements.length > 0) {
+            const _replSnapshot = lastReplacements.slice();
+            // Delay showing replacement modal slightly to avoid race with closing add-round modal
+            setTimeout(() => {
+              try { showReplacementModal(_replSnapshot); } catch (e) { console.warn('Delayed showReplacementModal failed', e); }
+            }, 50);
+          }
           updateGameDisplay();
           render();
         } finally {
