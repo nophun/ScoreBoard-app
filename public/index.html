@@ -1930,8 +1930,6 @@
       let players = {"active": ["Player 1", "Player 2", "Player 3", "Player 4"], "queue": []};
       // Track how many 50-point levels each player has reached
       let eliminationLevels = {};
-      // Has the one-time 25-point elimination been used for the current game?
-      let elimination25Used = false;
       // Which player (name) caused the one-time 25-point elimination; null if unused
       let elimination25UsedBy = null;
       // Internal flag to prevent duplicate alerts when onblur triggers savePlayerName again
@@ -1959,16 +1957,10 @@
       }
       try { globalThis.syncRoundsToModule = syncRoundsToModule; } catch (e) { console.warn('Failed to expose syncRoundsToModule on globalThis', e); }
       
-      // Tests: allow explicitly setting the module-scoped elimination25Used flag
-      function setElimination25Used(val) {
-        try { elimination25Used = !!val; } catch (e) { console.warn('setElimination25Used: failed to set flag', e); }
-        try { globalThis.elimination25Used = elimination25Used; } catch (e) { console.warn('setElimination25Used: failed to expose flag on globalThis', e); }
-      }
       function setElimination25UsedBy(name) {
         try { elimination25UsedBy = name || null; } catch (e) { console.warn('setElimination25UsedBy: failed to set value', e); }
         try { globalThis.elimination25UsedBy = elimination25UsedBy; } catch (e) { console.warn('setElimination25UsedBy: failed to expose on globalThis', e); }
       }
-      try { globalThis.setElimination25Used = setElimination25Used; } catch (e) { console.warn('Failed to expose setElimination25Used on globalThis', e); }
       try { globalThis.setElimination25UsedBy = setElimination25UsedBy; } catch (e) { console.warn('Failed to expose setElimination25UsedBy on globalThis', e); }
       
       function toggleAddPlayerForm() {
@@ -2831,7 +2823,7 @@
         const levelsReached = eliminationLevels[playerName] || 0;
         const currentTotal = (stats && stats.roundsPlayed > 0) ? stats.totalScore : 0;
         const candidates = [];
-        if (!elimination25Used && currentTotal < 25) candidates.push({ threshold: 25, type: '25' });
+        if (!elimination25UsedBy && currentTotal < 25) candidates.push({ threshold: 25, type: '25' });
         const next50 = (levelsReached + 1) * 50;
         if (next50 > currentTotal) candidates.push({ threshold: next50, type: '50' });
         
@@ -3101,7 +3093,7 @@
                 games[g.id].rounds = games[g.id].rounds || [];
                 games[g.id].players = games[g.id].players || { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] };
                 games[g.id].eliminationLevels = games[g.id].eliminationLevels || {};
-                games[g.id].elimination25Used = !!games[g.id].elimination25Used;
+                games[g.id].elimination25UsedBy = games[g.id].elimination25UsedBy || null;
                 games[g.id].playerCreationOrder = games[g.id].playerCreationOrder || (games[g.id].players ? [...games[g.id].players.active.filter(Boolean), ...games[g.id].players.queue] : []);
                 games[g.id].createdAt = g.createdAt || Date.now();
                 games[g.id].roundsLoaded = true;
@@ -3255,7 +3247,6 @@
               games[currentGameId].rounds = data.rounds || [];
               games[currentGameId].players = data.players || games[currentGameId].players || { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] };
               games[currentGameId].eliminationLevels = data.eliminationLevels || games[currentGameId].eliminationLevels || {};
-              games[currentGameId].elimination25Used = !!data.elimination25Used;
               games[currentGameId].elimination25UsedBy = data.elimination25UsedBy || null;
               games[currentGameId].playerCreationOrder = data.playerCreationOrder || games[currentGameId].playerCreationOrder || [];
               games[currentGameId].createdAt = payload.createdAt || games[currentGameId].createdAt || Date.now();
@@ -3264,7 +3255,6 @@
               rounds = games[currentGameId].rounds || [];
               players = { active: [...games[currentGameId].players.active], queue: [...games[currentGameId].players.queue] };
               eliminationLevels = games[currentGameId].eliminationLevels ? {...games[currentGameId].eliminationLevels} : {};
-              elimination25Used = !!games[currentGameId].elimination25Used;
               elimination25UsedBy = games[currentGameId].elimination25UsedBy || null;
               updateGameDisplay();
               render();
@@ -3285,7 +3275,6 @@
               queue: [...game.players.queue]
             };
             eliminationLevels = game.eliminationLevels ? {...game.eliminationLevels} : {};
-            elimination25Used = !!game.elimination25Used;
             elimination25UsedBy = game.elimination25UsedBy || null;
           } else {
             // Migrate old games that don't have players stored
@@ -3296,9 +3285,9 @@
               queue: [...players.queue]
             };
             game.eliminationLevels = {};
-            game.elimination25Used = false;
+            game.elimination25UsedBy = null;
             eliminationLevels = {};
-            elimination25Used = false;
+            elimination25UsedBy = null;
             saveGames();
           }
           
@@ -3326,8 +3315,6 @@
           games[currentGameId].playerCreationOrder = games[currentGameId].playerCreationOrder || [...players.active.filter(Boolean), ...players.queue];
           // Persist elimination level tracking
           games[currentGameId].eliminationLevels = {...eliminationLevels};
-          // Persist 25-point elimination flag
-          games[currentGameId].elimination25Used = !!elimination25Used;
           // Persist who triggered the 25-point elimination (if any)
           games[currentGameId].elimination25UsedBy = elimination25UsedBy || null;
           if (alwaysPersist) {
@@ -3497,7 +3484,8 @@
         }
         
         // Ensure runtime 25-rule flag is reset for the new game
-        elimination25Used = false;
+        elimination25UsedBy = null;
+        try { if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(null); } catch (e) { /* ignore */ }
         
         // Create new game
         const gameId = "game-" + Date.now();
@@ -3528,7 +3516,6 @@
           elimination25UsedBy: null,
           players: gamePlayers,
           eliminationLevels: {},
-          elimination25Used: false,
           playerCreationOrder: filledNames.slice(),
           createdAt: Date.now(),
           // Mark roundsLoaded immediately to avoid an immediate refetch while
@@ -3597,38 +3584,7 @@
         }, 100);
       }
       
-      function createNewGame() {
-        const input = document.getElementById("newGameInput");
-        const name = input.value.trim();
-        
-        if (!name) {
-          alert("Please enter a game name");
-          return;
-        }
-        
-        // Reset runtime 25-rule flag for this new game
-        elimination25Used = false;
-        
-        const gameId = "game-" + Date.now();
-        games[gameId] = {
-          name: name,
-          rounds: [],
-          eliminationLevels: {},
-          elimination25Used: false,
-          createdAt: Date.now()
-        };
-        
-        currentGameId = gameId;
-        localStorage.setItem("cardgame-current-game", currentGameId);
-        games[gameId] = serverData || game;
-        input.value = "";
-        // We fetched the canonical record so mark rounds as loaded
-        games[gameId].roundsLoaded = true;
-        saveGames();
-        loadCurrentGame();
-        renderGameList();
-        render();
-      }
+      
       
       function switchToGame(gameId) {
         if (games[gameId]) {
@@ -3718,7 +3674,7 @@
           const tb = Number(b[0].split('-').pop()) || 0;
           return tb - ta;
         });
-        
+        console.log('Rendering games management, game entries:', gameEntries);
         gameEntries.forEach(([gameId, game]) => {
           const gameItem = document.createElement("div");
           gameItem.className = "games-management-item" + (gameId === currentGameId ? " active" : "");
@@ -4204,7 +4160,6 @@
           }
           if (used25) break;
         }
-        elimination25Used = !!used25;
         elimination25UsedBy = used25By || null;
         try { setElimination25UsedBy(elimination25UsedBy); } catch (e) { console.warn('Failed to set elimination25UsedBy via setter after replay', e); }
         // Ensure the player who was eliminated at 25 is recorded as having reached level 1
@@ -4803,7 +4758,7 @@
         lastReplacements = [];
         
         // ONE-TIME 25-point rule
-        if (!elimination25Used) {
+        if (!elimination25UsedBy) {
           const candidates25 = [];
           for (let i = 0; i < playersBefore.length; i++) {
             const name = playersBefore[i];
@@ -4835,7 +4790,6 @@
                 players.active[slotIdx] = replacement || null;
                 lastReplacements.push({ slotIndex: slotIdx, eliminated: c.name, replacement: replacement });
               }
-              elimination25Used = true;
               elimination25UsedBy = c.name;
               try { setElimination25UsedBy(c.name); } catch (e) { console.warn('Failed to set elimination25UsedBy via setter', e); }
               eliminationLevels[c.name] = Math.max(eliminationLevels[c.name] || 0, 1);
@@ -4960,7 +4914,7 @@
           if (addRoundBtnEl) addRoundBtnEl.disabled = true;
         } catch (e) { console.warn('Failed to disable add-round buttons', e); }
         
-        // Apply elimination rules which may mutate `players`, `players.queue`, `eliminationLevels`, `elimination25Used`, and `lastReplacements`.
+        // Apply elimination rules which may mutate `players`, `players.queue`, `eliminationLevels`, and `lastReplacements`.
         _applyEliminations(prevTotals, playersBefore, points);
         
         const roundData = { players: playersBefore.map(p => p || null), cards: cards, points: points, timestamp: Date.now() };
@@ -5351,7 +5305,7 @@
       'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
       'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
       // Expose runtime state and helper functions so tests can run against the live app
-      'players','rounds','games','currentGameId','eliminationLevels','elimination25Used','elimination25UsedBy','parseRoundData','calculatePlayerTotals','calculatePoints','reverseCalculateCards','computeTotals','computeCumulativeSnapshots','loadCurrentGame',
+      'players','rounds','games','currentGameId','eliminationLevels','elimination25UsedBy','parseRoundData','calculatePlayerTotals','calculatePoints','reverseCalculateCards','computeTotals','computeCumulativeSnapshots','loadCurrentGame',
       'setCurrentGameId','persistLocalGames','saveCurrentGame','setServerAvailable','runEliminationTests','runUnitTests','runIntegrationTests'
       ];
       
