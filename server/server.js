@@ -61,7 +61,7 @@ app.get('/api/games/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT id, name, data, created_at FROM games WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    res.json({ id: row.id, name: row.name, data: JSON.parse(row.data || '{}'), createdAt: row.created_at });
+    res.json({ id: row.id, data: JSON.parse(row.data || '{}'), createdAt: row.created_at });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load game' });
