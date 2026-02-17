@@ -142,13 +142,18 @@
         players.queue.push(c.name);
         const idx = players.active.indexOf(c.name);
         if (replacement) players.active[idx] = replacement; else players.active[idx] = null;
+        // Simulate app behavior: mark 25-rule used, record who used it, and ensure elimination level >= 1
         globalThis.elimination25Used = true;
+        globalThis.elimination25UsedBy = c.name;
+        globalThis.eliminationLevels[c.name] = Math.max(globalThis.eliminationLevels[c.name] || 0, 1);
         replaced.push({eliminated: c.name, replacement});
       }
 
       try {
         assertEqual(replaced[0].eliminated, 'P1', 'P1 should be eliminated first by 25-rule');
         assertEqual(globalThis.elimination25Used, true, '25-rule flag should be set');
+        assertEqual(globalThis.elimination25UsedBy, 'P1', 'elimination25UsedBy should record the player who used the 25-rule');
+        assertEqual(globalThis.eliminationLevels['P1'] >= 1, true, 'P1 should have elimination level >= 1 after 25-rule');
         results.push('Test C passed');
       } catch (e) { results.push('Test C failed: '+e.message); }
     })();
@@ -188,6 +193,7 @@
       });
 
       let used25 = false;
+      let used25By = undefined;
       const runningTotals = {};
       for (const rd of globalThis.rounds) {
         const parsed = parseRoundData(rd);
@@ -198,6 +204,7 @@
           runningTotals[pname] = (runningTotals[pname] || 0) + (Number(pts[i]) || 0);
           if (!used25 && runningTotals[pname] >= 25) {
             used25 = true;
+            used25By = pname;
             break;
           }
         }
@@ -213,8 +220,10 @@
         }
       } catch (e) { console.warn('Failed to set eliminationLevels', e); }
       if (typeof setElimination25Used === 'function') setElimination25Used(!!used25); else globalThis.elimination25Used = !!used25;
+      if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(used25 ? used25By : undefined); else globalThis.elimination25UsedBy = used25 ? used25By : undefined;
       try {
         assertEqual(globalThis.elimination25Used, false, '25-rule should be unset after deleting the round that caused it');
+        assertEqual(globalThis.elimination25UsedBy == null, true, 'elimination25UsedBy should be unset (null or undefined) after deleting the round that caused it');
         assertEqual(globalThis.eliminationLevels['A'], 0, 'A should have 0 elimination levels');
         results.push('Test D passed');
       } catch (e) { results.push('Test D failed: '+e.message); }
