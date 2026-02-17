@@ -2305,70 +2305,68 @@
           openGenericEditModal('player', { playerType: playerType, index: index, originalName: currentName || '' });
         } catch (e) { console.warn('editPlayerName: failed to open modal', e); }
       }
-      
-      function handleEditKeyPress(event, originalName, playerType, index) {
-        if (event.key === 'Enter') {
-          savePlayerName(originalName, playerType, index);
-        } else if (event.key === 'Escape') {
-          cancelEditPlayerName(originalName, playerType, index);
-        }
-      }
-      
-      function savePlayerName(originalName, playerType, index) {
-        const inputId = `editInput_${playerType}_${index}`;
-        const input = document.getElementById(inputId);
-        
-        if (!input) return;
-        
-        const newName = input.value.trim();
-        
-        // Validate new name
-        if (newName === '') {
-          alert('Player name cannot be empty');
-          input.focus();
-          return;
-        }
-        
-        if (newName === originalName) {
-          // No change, just revert
-          renderPlayers();
-          return;
-        }
-        
-        // Check for duplicate names
-        const allPlayerNames = [...players.active.filter(p => p !== null), ...players.queue];
-        if (allPlayerNames.includes(newName)) {
-          // Duplicate detected — show alert once, then revert to original name and close editor
-          try {
-            if (!_suppressDuplicateAlert) {
-              _suppressDuplicateAlert = true;
-              try { alert('A player with this name already exists'); } catch (e) { console.warn('Failed to show duplicate name alert', e); }
-              // Clear suppression on next tick so subsequent edits still alert normally
-              setTimeout(() => { _suppressDuplicateAlert = false; }, 0);
-            }
-          } catch (e) { console.warn('Duplicate name alert error', e); }
-          try { cancelEditPlayerName(originalName, playerType, index); } catch (e) { console.warn('Failed to cancel edit after duplicate name', e); }
-          return;
-        }
-        
-        // Update the player name
-        if (playerType === 'active') {
-          players.active[index] = newName;
-        } else {
-          players.queue[index] = newName;
-        }
-        
-        // Save to localStorage
-        saveCurrentGame();
-        
-        // Re-render everything that displays player names
-        renderPlayers();
-        updateGameDisplay();
-      }
-      
+            
       function cancelEditPlayerName(originalName, playerType, index) {
         renderPlayers();
       }
+      
+      // Rename a player across game state: playerCreationOrder, rounds, eliminationLevels, lastReplacements
+      function renamePlayerAcrossGame(originalName, newName) {
+        if (!originalName || !newName || originalName === newName) return;
+        try {
+          // Update stored playerCreationOrder for the current game
+          if (currentGameId && games[currentGameId] && Array.isArray(games[currentGameId].playerCreationOrder)) {
+            const pco = games[currentGameId].playerCreationOrder;
+            for (let i = 0; i < pco.length; i++) {
+              if (pco[i] === originalName) pco[i] = newName;
+            }
+          }
+        } catch (e) { console.warn('renamePlayerAcrossGame: update playerCreationOrder failed', e); }
+        
+        try {
+          // Update any stored rounds that reference the player name
+          if (Array.isArray(rounds)) {
+            for (const round of rounds) {
+              if (round && Array.isArray(round.players)) {
+                for (const [i, p] of round.players.entries()) {
+                  if (p === originalName) {
+                    round.players[i] = newName;
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) { console.warn('renamePlayerAcrossGame: update rounds failed', e); }
+        
+        try {
+          // Transfer elimination level tracking for the player
+          if (eliminationLevels && Object.hasOwn(eliminationLevels, originalName)) {
+            const val = eliminationLevels[originalName];
+            delete eliminationLevels[originalName];
+            eliminationLevels[newName] = val;
+          }
+        } catch (e) { console.warn('renamePlayerAcrossGame: update eliminationLevels failed', e); }
+        
+        try {
+          // Update lastReplacements entries
+          if (Array.isArray(lastReplacements)) {
+            lastReplacements.forEach(rep => {
+              if (!rep) return;
+              if (rep.eliminated === originalName) rep.eliminated = newName;
+              if (rep.replacement === originalName) rep.replacement = newName;
+            });
+          }
+        } catch (e) { console.warn('renamePlayerAcrossGame: update lastReplacements failed', e); }
+        try {
+          // Ensure persisted game record reflects updated rounds on server/local snapshot
+          if (currentGameId && games[currentGameId]) {
+            games[currentGameId].rounds = rounds;
+            // Try to persist full game (including rounds) to server; falls back to local persist
+            try { saveGame(currentGameId, true).catch(err => { console.warn('saveGame(includeRounds) failed', err); persistLocalGames(); }); } catch (e) { console.warn('saveGame(includeRounds) invocation failed', e); persistLocalGames(); }
+          }
+        } catch (e) { console.warn('renamePlayerAcrossGame: persist updated rounds failed', e); }
+      }
+
       // Generic edit modal handlers
       function openGenericEditModal(kind, data) {
         try {
@@ -2422,6 +2420,7 @@
             players.queue.forEach((p, i) => { if (!(playerType === 'queue' && i === index)) allNames.push(p); });
             if (allNames.includes(newVal)) { alert('A player with this name already exists'); return; }
             if (playerType === 'active') players.active[index] = newVal; else players.queue[index] = newVal;
+            try { renamePlayerAcrossGame(originalName, newVal); } catch (e) { console.warn('renamePlayerAcrossGame failed', e); }
             try { saveCurrentGame(); } catch (e) { console.warn('saveCurrentGame failed', e); }
             renderPlayers();
             updateGameDisplay();
@@ -5292,8 +5291,8 @@
       const __expose = [
       'toggleSidebar','closeSidebar','showGame','showPlayers','showStatistics','showHistory',
       'showNewGame','showGamesManagement','showAddRoundModal','closeAddRoundModal','confirmRound','deleteLastRound','addPlayer','addPlayerInput',
-      'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame','savePlayerName',
-      'handleEditKeyPress','cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName','openGenericEditModal','confirmGenericEditModal','cancelGenericEditModal','genericEditModal',
+      'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame',
+      'cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName','openGenericEditModal','confirmGenericEditModal','cancelGenericEditModal','genericEditModal',
       'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
       'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
       // Expose runtime state and helper functions so tests can run against the live app
