@@ -64,7 +64,8 @@
       }
     } catch (e) { console.warn('Failed to snapshot previous game', e); }
     const tempGameId = 'test-temp-' + Date.now();
-    globalThis.games[tempGameId] = { name: 'INTEGRATION-TEST-' + Date.now(), rounds: [], playerCreationOrder: [], createdAt: Date.now(), roundsLoaded: true, localOnly: true };
+    globalThis.games[tempGameId] = { name: 'INTEGRATION-TEST-' + Date.now(), rounds: [], playerCreationOrder: [], createdAt: Date.now(), localOnly: true };
+    try { globalThis.games_metadata = globalThis.games_metadata || {}; globalThis.games_metadata[tempGameId] = { roundsLoaded: true, roundCount: 0 }; } catch (e) { console.warn('Failed to set games_metadata in test', e); }
     globalThis.currentGameId = tempGameId;
     // If the app exposes a setter to update the module-scoped currentGameId, call it
     try { if (typeof setCurrentGameId === 'function') setCurrentGameId(tempGameId); } catch (e) { console.warn('setCurrentGameId failed', e); }
