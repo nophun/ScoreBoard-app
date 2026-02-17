@@ -2245,17 +2245,22 @@
               const serverData = gjson && gjson.data ? gjson.data : gjson;
               // Merge into local memory but preserve any client-only transient fields we want
               games[gameId] = serverData || game;
-              games[gameId].localOnly = false;
+              games_metadata[gameId] = games_metadata[gameId] || {};
+              games_metadata[gameId].localOnly = false;
             } else {
               // Server didn't return the object; fall back to marking non-local
               game.localOnly = false;
               games[gameId] = game;
+              games_metadata[gameId] = games_metadata[gameId] || {};
+              games_metadata[gameId].localOnly = false;
             }
           } catch (e) {
             console.warn('syncLocalGameToServer: fetching canonical record failed, marking game non-local', e);
             // If fetching canonical record failed, at least mark as non-local
             game.localOnly = false;
             games[gameId] = game;
+            games_metadata[gameId] = games_metadata[gameId] || {};
+            games_metadata[gameId].localOnly = false;
           }
           
           // Update stored games snapshot to reflect new non-local state
@@ -3073,27 +3078,46 @@
         return 'game';
       }
       
+        // Helper: apply preloaded local-only games parsed from storage.
+        // If `preserveCurrent` is true, keep existing `currentGameId` when possible;
+        // otherwise choose the last-open or first available local-only game.
+        function applyPreloadedLocalGames(parsed, preserveCurrent) {
+          try {
+            if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) return false;
+            const localOnlyGames = {};
+            Object.keys(parsed).forEach(id => {
+              try {
+                if (parsed[id] && parsed[id].localOnly === true) localOnlyGames[id] = parsed[id];
+              } catch (e) { console.warn('applyPreloadedLocalGames: skipping malformed game entry', id, parsed?.[id], e); }
+            });
+            games = localOnlyGames;
+            // Initialize runtime metadata for these preloaded local-only games
+            try {
+              Object.keys(localOnlyGames).forEach(id => {
+                games_metadata[id] = games_metadata[id] || {};
+                games_metadata[id].roundsLoaded = true;
+                games_metadata[id].roundCount = Array.isArray(localOnlyGames[id].rounds) ? localOnlyGames[id].rounds.length : (typeof localOnlyGames[id].roundCount === 'number' ? localOnlyGames[id].roundCount : 0);
+                games_metadata[id].localOnly = true;
+              });
+            } catch (e) { console.warn('applyPreloadedLocalGames: failed to init games_metadata for preloaded local games', e); }
+
+            const last = localStorage.getItem('cardgame-current-game');
+            if (preserveCurrent) {
+              currentGameId = (last && games[last]) ? last : currentGameId;
+            } else {
+              currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
+            }
+            return true;
+          } catch (e) { console.warn('applyPreloadedLocalGames failed', e); return false; }
+        }
+      
       function initializeGames() {
         // Load games from server (or create default if none). This function performs an initial sync with the backend.
         if (!serverAvailable) {
           // Offline: restore saved games from GAMES_STORAGE_KEY using safe loader.
           const parsed = safeLoadStoredGames();
-          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-            const localOnlyGames = {};
-            Object.keys(parsed).forEach(id => {
-              try {
-                if (parsed[id] && parsed[id].localOnly) {
-                  localOnlyGames[id] = parsed[id];
-                }
-              } catch (e) {
-                console.warn('initializeGames: skipping malformed game entry', id, parsed?.[id], e);
-              }
-            });
-            games = localOnlyGames;
-            // restore last-open game if it is localOnly, otherwise pick the first local-only game
-            const last = localStorage.getItem('cardgame-current-game');
-            currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
-          } else {
+          const applied = applyPreloadedLocalGames(parsed, false);
+          if (!applied) {
             games = {};
             currentGameId = null;
           }
@@ -3104,29 +3128,15 @@
         
         // Load any locally persisted games first so the UI can show them immediately
         try {
-          const parsedStored = safeLoadStoredGames();
-          if (parsedStored && typeof parsedStored === 'object' && Object.keys(parsedStored).length > 0) {
-            const localOnlyGames = {};
-            Object.keys(parsedStored).forEach(id => {
-              try {
-                if (parsedStored[id] && parsedStored[id].localOnly) localOnlyGames[id] = parsedStored[id];
-              } catch (e) { console.warn('initializeGames: skipping malformed stored game', id, parsedStored?.[id], e); }
-            });
-            games = localOnlyGames;
-            // If stored last-open game is local-only, keep it selected
-            const last = localStorage.getItem('cardgame-current-game');
-            currentGameId = (last && games[last]) ? last : currentGameId;
-            // Mark these preloaded local-only games as loaded in runtime metadata
-            try {
-              Object.keys(localOnlyGames).forEach(id => {
-                games_metadata[id] = games_metadata[id] || {};
-                games_metadata[id].roundsLoaded = true;
-                games_metadata[id].roundCount = Array.isArray(localOnlyGames[id].rounds) ? localOnlyGames[id].rounds.length : (typeof localOnlyGames[id].roundCount === 'number' ? localOnlyGames[id].roundCount : 0);
-              });
-            } catch (e) { console.warn('initializeGames: failed to init games_metadata for preloaded local games', e); }
-            // Render early so users see local games while the fetch runs
-            try { loadCurrentGame(); renderGameList(); } catch (e) { /* ignore */ }
+          const parsed = safeLoadStoredGames();
+          const applied = applyPreloadedLocalGames(parsed, true);
+          if (!applied) {
+            games = {};
+            currentGameId = null;
           }
+          // Render early so users see local games while the fetch runs
+          loadCurrentGame();
+          renderGameList();
         } catch (e) { console.warn('initializeGames: failed to preload stored local games', e); }
 
         return fetch(API_BASE + '/api/games')
@@ -3137,38 +3147,51 @@
         .then(list => {
           if (Array.isArray(list) && list.length > 0) {
             // Convert array to keyed object like previous local model, but list may be metadata-only
-            games = {};
+            // If we already have locally-created games (e.g. the user created a game while
+            // the initial fetch was in-flight), merge server entries instead of replacing
+            // the entire `games` object so we don't clobber newly-created local games.
+            const replaceAll = !games || Object.keys(games).length === 0;
+            if (replaceAll) games = {};
             list.forEach(g => {
               // If `data` is present, server returned full object; otherwise treat as metadata
               if (g.data) {
-                games[g.id] = g.data || {};
-                games[g.id].rounds = games[g.id].rounds || [];
-                games[g.id].players = games[g.id].players || { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] };
-                games[g.id].eliminationLevels = games[g.id].eliminationLevels || {};
-                games[g.id].elimination25UsedBy = games[g.id].elimination25UsedBy || null;
-                games[g.id].playerCreationOrder = g.playerCreationOrder || (games[g.id].players ? [...games[g.id].players.active.filter(Boolean), ...games[g.id].players.queue] : []);
-                games[g.id].createdAt = g.createdAt || Date.now();
+                const entry = g.data || {};
+                entry.rounds = entry.rounds || [];
+                entry.players = entry.players || { active: ["Player 1","Player 2","Player 3","Player 4"], queue: [] };
+                entry.eliminationLevels = entry.eliminationLevels || {};
+                entry.elimination25UsedBy = entry.elimination25UsedBy || null;
+                entry.playerCreationOrder = g.playerCreationOrder || (entry.players ? [...entry.players.active.filter(Boolean), ...entry.players.queue] : []);
+                entry.createdAt = g.createdAt || Date.now();
+                // Merge into existing games map, preferring existing local entry when present
+                games[g.id] = games[g.id] && Object.keys(games[g.id]).length > 0 ? { ...entry, ...games[g.id] } : entry;
                 games_metadata[g.id] = games_metadata[g.id] || {};
                 games_metadata[g.id].roundsLoaded = true;
                 games_metadata[g.id].roundCount = (games[g.id].rounds || []).length;
+                games_metadata[g.id].localOnly = false;
               } else {
                 // Metadata-only entry: keep canonical fields on `games` but store counts/loaded flag in `games_metadata`
-                games[g.id] = {
-                  name: g.name || 'Game',
-                  createdAt: g.createdAt || Date.now(),
-                  playerCreationOrder: g.playerCreationOrder || [],
-                  localOnly: !!g.localOnly,
-                  rounds: [],
-                };
+                if (!games[g.id] || Object.keys(games[g.id]).length === 0) {
+                  games[g.id] = {
+                    name: g.name || 'Game',
+                    createdAt: g.createdAt || Date.now(),
+                    playerCreationOrder: g.playerCreationOrder || [],
+                    rounds: [],
+                  };
+                } else {
+                  // Preserve any richer local copy
+                  games[g.id].name = games[g.id].name || g.name || 'Game';
+                }
                 games_metadata[g.id] = games_metadata[g.id] || {};
                 games_metadata[g.id].roundCount = g.roundCount || 0;
                 games_metadata[g.id].roundsLoaded = false;
+                games_metadata[g.id].localOnly = false;
               }
               games[g.id].name = games[g.id].name || g.name || 'Game';
             });
           } else {
-            // No games on server: start with empty games collection
-            games = {};
+            // No games on server: start with empty games collection only if we
+            // don't already have local games (avoid clobbering user-created games)
+            if (!games || Object.keys(games).length === 0) games = {};
           }
           // Local-only games were preloaded before the server fetch; no further merge needed here.
         })
@@ -3564,13 +3587,16 @@
           playerCreationOrder: filledNames.slice(),
           createdAt: Date.now(),
         };
+        const createToggle = document.getElementById('createLocalToggle');
+        const userRequestedLocal = createToggle && createToggle.checked;
+        const localOnly = userRequestedLocal || !serverAvailable;
         // Mark roundsLoaded in client-only metadata to avoid immediate refetch
         games_metadata[gameId] = games_metadata[gameId] || {};
         games_metadata[gameId].roundsLoaded = true;
         games_metadata[gameId].roundCount = 0;
-        const createToggle = document.getElementById('createLocalToggle');
-        const userRequestedLocal = createToggle && createToggle.checked;
-        const localOnly = userRequestedLocal || !serverAvailable;
+        // Track client-only flags in runtime metadata (do not persist/send to server)
+        games_metadata[gameId].localOnly = !!localOnly;
+        // Also mark the stored game object as local-only so it persists that flag
         if (localOnly) games[gameId].localOnly = true;
         
         // Switch to new game and load its players with deep copy
@@ -3606,6 +3632,7 @@
             games_metadata[gameId] = games_metadata[gameId] || {};
             games_metadata[gameId].roundsLoaded = true;
             games_metadata[gameId].roundCount = (games[gameId].rounds || []).length;
+            games_metadata[gameId].localOnly = false;
             saveCurrentGame(false);
             // Persist local backup
             persistLocalGames();
@@ -3613,6 +3640,8 @@
           }).catch(err => {
             console.warn('Creating game on server failed, falling back to local', err);
             games[gameId].localOnly = true;
+            games_metadata[gameId] = games_metadata[gameId] || {};
+            games_metadata[gameId].localOnly = true;
             saveCurrentGame(false);
             persistLocalGames();
             localStorage.setItem("cardgame-current-game", currentGameId);
@@ -3671,10 +3700,9 @@
         delete games[gameId];
         
         if (currentGameId === gameId) {
-          const remaining = Object.keys(games);
-          currentGameId = remaining.length > 0 ? remaining[0] : null;
-          if (currentGameId) localStorage.setItem("cardgame-current-game", currentGameId); else localStorage.removeItem('cardgame-current-game');
-          loadCurrentGame();
+          // Clear current selection; keep UI on Games Management page
+          currentGameId = null;
+          try { localStorage.removeItem('cardgame-current-game'); } catch (e) { /* ignore */ }
         }
         
         // If server is available and the game exists on server (not local-only), attempt remote delete
@@ -3692,16 +3720,30 @@
             try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
             alert('Failed to delete game on server: ' + (err && err.message ? err.message : 'unknown'));
           }).finally(() => {
-            renderGameList();
-            renderGamesManagement();
-            render();
+            // Reinitialize games to refresh state from server and stay on Games Management
+            try {
+              initializeGames().then(() => {
+                try { showGamesManagement(); } catch (e) { console.warn('post-initializeGames handling failed', e); renderGameList(); renderGamesManagement(); render(); }
+              }).catch(e => { throw e; });
+            } catch (e) {
+              console.warn('initializeGames after delete failed', e);
+              renderGameList();
+              renderGamesManagement();
+              render();
+            }
           });
         } else {
           // Local-only game or offline: persist local deletion only
           try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
-          renderGameList();
-          renderGamesManagement();
-          render();
+          // Reinitialize games to refresh state (local-only deletion) and stay on Games Management
+          initializeGames().then(() => {
+            try { showGamesManagement(); } catch (e) { console.warn('post-initializeGames handling failed', e); renderGameList(); renderGamesManagement(); render(); }
+          }).catch(e => {
+            console.warn('initializeGames after local delete failed', e);
+            renderGameList();
+            renderGamesManagement();
+            render();
+          });
         }
         
         // If no games remain, show the no-games view
@@ -5116,24 +5158,34 @@
       try {
         const storedSync = safeLoadStoredGames();
         if (storedSync && typeof storedSync === 'object' && Object.keys(storedSync).length > 0) {
-          games = storedSync;
-          // Mark loaded stored games in client-only metadata (they are assumed fully loaded)
-          try {
-            Object.keys(storedSync).forEach(id => {
-              try {
-                games_metadata[id] = games_metadata[id] || {};
-                games_metadata[id].roundsLoaded = true;
-                games_metadata[id].roundCount = Array.isArray(storedSync[id].rounds) ? storedSync[id].rounds.length : (typeof storedSync[id].roundCount === 'number' ? storedSync[id].roundCount : 0);
-              } catch (e) { /* ignore per-game errors */ }
-            });
-          } catch (e) { console.warn('Immediate local load: failed to initialize games_metadata', e); }
-          // restore last-open game if known, otherwise pick the first
-          currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
-          renderGameList();
-          renderGamesManagement();
-          loadCurrentGame();
-          updateGameDisplay();
-          render();
+          // Only preload locally-created games (explicit localOnly === true)
+          const localOnlyGames = {};
+          Object.keys(storedSync).forEach(id => {
+            try {
+              if (storedSync[id] && storedSync[id].localOnly === true) localOnlyGames[id] = storedSync[id];
+            } catch (e) { /* ignore per-game errors */ }
+          });
+          if (Object.keys(localOnlyGames).length > 0) {
+            games = localOnlyGames;
+            // Mark loaded stored games in client-only metadata (they are assumed fully loaded)
+            try {
+              Object.keys(localOnlyGames).forEach(id => {
+                try {
+                  games_metadata[id] = games_metadata[id] || {};
+                  games_metadata[id].roundsLoaded = true;
+                  games_metadata[id].roundCount = Array.isArray(localOnlyGames[id].rounds) ? localOnlyGames[id].rounds.length : (typeof localOnlyGames[id].roundCount === 'number' ? localOnlyGames[id].roundCount : 0);
+                  games_metadata[id].localOnly = true;
+                } catch (e) { /* ignore per-game errors */ }
+              });
+            } catch (e) { console.warn('Immediate local load: failed to initialize games_metadata', e); }
+            // restore last-open game if known, otherwise pick the first
+            currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
+            renderGameList();
+            renderGamesManagement();
+            loadCurrentGame();
+            updateGameDisplay();
+            render();
+          }
         }
       } catch (e) {
         console.warn('Immediate local load failed', e);

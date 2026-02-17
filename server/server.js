@@ -46,8 +46,7 @@ app.get('/api/games', (req, res) => {
         name: r.name,
         createdAt: r.created_at,
         roundCount: Array.isArray(parsed.rounds) ? parsed.rounds.length : 0,
-        playerCreationOrder: parsed.playerCreationOrder || (parsed.players ? [...(parsed.players.active||[]), ...(parsed.players.queue||[])] : []),
-        localOnly: !!parsed.localOnly
+        playerCreationOrder: parsed.playerCreationOrder || (parsed.players ? [...(parsed.players.active||[]), ...(parsed.players.queue||[])] : [])
       };
     });
     res.json(list);
