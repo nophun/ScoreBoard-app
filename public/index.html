@@ -3556,7 +3556,8 @@
         try { if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(null); } catch (e) { /* ignore */ }
         
         // Create new game
-        const gameId = "game-" + Date.now();
+        const now = Date.now();
+        const gameId = "game-" + now;
         
         // Set up players for this game
         const gamePlayers = {
@@ -3585,7 +3586,7 @@
           players: gamePlayers,
           eliminationLevels: {},
           playerCreationOrder: filledNames.slice(),
-          createdAt: Date.now(),
+          createdAt: now,
         };
         const createToggle = document.getElementById('createLocalToggle');
         const userRequestedLocal = createToggle && createToggle.checked;
@@ -3626,7 +3627,6 @@
             // Ensure local representation matches server
             games[gameId] = res.data || games[gameId];
             games[gameId].name = res.name || games[gameId].name;
-            games[gameId].createdAt = res.createdAt || games[gameId].createdAt;
             // Mark that we have the full server-side record so loadCurrentGame
             // doesn't immediately attempt another fetch for this game.
             games_metadata[gameId] = games_metadata[gameId] || {};
