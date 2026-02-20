@@ -1740,7 +1740,7 @@
       
       
       <div class="players-column players-section" style="margin-bottom: 20px;">
-        <button class="collapsible collapsed" onclick="toggleAddPlayerForm()">Add New Player</button>
+        <button class="collapsible collapsed" onclick="toggleAddPlayerForm()">➕ Add New Player</button>
         <div class="add-player-form collapsed">
           <input type="text" class="add-player-input" placeholder="Enter player name..." id="newPlayerInput">
           <button class="btn-large bg-green" onclick="addPlayer()">Add Player</button>
@@ -2847,6 +2847,27 @@
         }
         return false;
       }
+
+      // Helper: initialize runtime metadata for local-only games
+      // `prefix` is used for contextual logging (e.g. 'Immediate local load')
+      function initLocalOnlyGamesMetadata(localOnlyGames, prefix) {
+        try {
+          Object.keys(localOnlyGames).forEach(id => {
+            try {
+              games_metadata[id] = games_metadata[id] || {};
+              games_metadata[id].roundsLoaded = true;
+              let _rc = 0;
+              if (Array.isArray(localOnlyGames[id].rounds)) {
+                _rc = localOnlyGames[id].rounds.length;
+              } else if (typeof localOnlyGames[id].roundCount === 'number') {
+                _rc = localOnlyGames[id].roundCount;
+              }
+              games_metadata[id].roundCount = _rc;
+              games_metadata[id].localOnly = true;
+            } catch (e) { console.warn(prefix + ': per-game metadata init failed for', id, e); }
+          });
+        } catch (e) { console.warn(prefix + ': failed to initialize games_metadata', e); }
+      }
       
       // Helper: compute elimination indicator info
       function computeEliminationInfo(playerName, stats) {
@@ -3093,13 +3114,8 @@
             games = localOnlyGames;
             // Initialize runtime metadata for these preloaded local-only games
             try {
-              Object.keys(localOnlyGames).forEach(id => {
-                games_metadata[id] = games_metadata[id] || {};
-                games_metadata[id].roundsLoaded = true;
-                games_metadata[id].roundCount = Array.isArray(localOnlyGames[id].rounds) ? localOnlyGames[id].rounds.length : (typeof localOnlyGames[id].roundCount === 'number' ? localOnlyGames[id].roundCount : 0);
-                games_metadata[id].localOnly = true;
-              });
-            } catch (e) { console.warn('applyPreloadedLocalGames: failed to init games_metadata for preloaded local games', e); }
+              initLocalOnlyGamesMetadata(localOnlyGames, 'applyPreloadedLocalGames');
+            } catch (e) {console.warn('applyPreloadedLocalGames: failed to init games_metadata for preloaded local games', e); }
 
             const last = localStorage.getItem('cardgame-current-game');
             if (preserveCurrent) {
@@ -3188,11 +3204,10 @@
               }
               games[g.id].name = games[g.id].name || g.name || 'Game';
             });
-          } else {
-            // No games on server: start with empty games collection only if we
-            // don't already have local games (avoid clobbering user-created games)
-            if (!games || Object.keys(games).length === 0) games = {};
+          } else if (!games || Object.keys(games).length === 0) {
+            games = {};
           }
+
           // Local-only games were preloaded before the server fetch; no further merge needed here.
         })
         .then(() => {
@@ -3535,7 +3550,7 @@
             alert('A game with this name already exists');
             return;
           }
-        } catch (e) { /* ignore potential malformed games */ }
+        } catch (e) { console.warn('createNewGameWithPlayers: error checking existing game names', e); }
 
         // Validate player names
         const filledNames = playerNames.filter(name => name !== '');
@@ -3553,7 +3568,7 @@
         
         // Ensure runtime 25-rule flag is reset for the new game
         elimination25UsedBy = null;
-        try { if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(null); } catch (e) { /* ignore */ }
+        try { if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(null); } catch (e) { console.warn('createNewGameWithPlayers: setElimination25UsedBy failed', e); }
         
         // Create new game
         const now = Date.now();
@@ -3702,7 +3717,7 @@
         if (currentGameId === gameId) {
           // Clear current selection; keep UI on Games Management page
           currentGameId = null;
-          try { localStorage.removeItem('cardgame-current-game'); } catch (e) { /* ignore */ }
+          try { localStorage.removeItem('cardgame-current-game'); } catch (e) { console.warn('deleteGame: failed to remove cardgame-current-game from localStorage', e); }
         }
         
         // If server is available and the game exists on server (not local-only), attempt remote delete
@@ -3790,6 +3805,15 @@
           
           gamesManagementList.appendChild(gameItem);
         });
+
+        // Add a footer button linking to the standalone Game Visualizer
+        try {
+          const footer = document.createElement('div');
+          footer.style.marginTop = '14px';
+          footer.style.textAlign = 'center';
+          footer.innerHTML = `<a class="btn" href="game-visualizer.html" target="_blank" rel="noopener" style="background:#17a2b8;color:white;padding:10px 18px;font-size:15px;text-decoration:none;border-radius:4px;display:inline-block;">Open Game Visualizer</a>`;
+          gamesManagementList.appendChild(footer);
+        } catch (e) { console.warn('renderGamesManagement: failed to append visualizer button', e); }
       }
       
       // Edit a game's name. Uses a prompt for simplicity and persists the change.
@@ -5163,20 +5187,13 @@
           Object.keys(storedSync).forEach(id => {
             try {
               if (storedSync[id] && storedSync[id].localOnly === true) localOnlyGames[id] = storedSync[id];
-            } catch (e) { /* ignore per-game errors */ }
+            } catch (e) { console.warn('Immediate local load: failed to read stored entry', id, e); }
           });
           if (Object.keys(localOnlyGames).length > 0) {
             games = localOnlyGames;
             // Mark loaded stored games in client-only metadata (they are assumed fully loaded)
             try {
-              Object.keys(localOnlyGames).forEach(id => {
-                try {
-                  games_metadata[id] = games_metadata[id] || {};
-                  games_metadata[id].roundsLoaded = true;
-                  games_metadata[id].roundCount = Array.isArray(localOnlyGames[id].rounds) ? localOnlyGames[id].rounds.length : (typeof localOnlyGames[id].roundCount === 'number' ? localOnlyGames[id].roundCount : 0);
-                  games_metadata[id].localOnly = true;
-                } catch (e) { /* ignore per-game errors */ }
-              });
+              initLocalOnlyGamesMetadata(localOnlyGames, 'Immediate local load');
             } catch (e) { console.warn('Immediate local load: failed to initialize games_metadata', e); }
             // restore last-open game if known, otherwise pick the first
             currentGameId = localStorage.getItem('cardgame-current-game') || Object.keys(games)[0];
