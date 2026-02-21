@@ -15,6 +15,12 @@
     }
     // Force local-only behavior so tests don't attempt network calls
     try { if (typeof stopRealtimeWebSocket === 'function') stopRealtimeWebSocket(); } catch(e) { console.warn('Elimination tests: stopRealtimeWebSocket failed', e); }
+    // Disable server availability to prevent saveGame/fetch calls during tests
+    const originalServerAvailable = (typeof serverAvailable === 'undefined') ? false : serverAvailable;
+    try {
+      if (typeof setServerAvailable === 'function') setServerAvailable(false);
+    } catch(e) { console.warn('Elimination tests: setServerAvailable failed', e); }
+
     try { if (typeof games === 'undefined' || games === null) globalThis.games = {}; } catch(e) { console.warn('Elimination tests: setting up global games failed', e); }
     try {
       if (!globalThis.currentGameId) {
@@ -22,8 +28,7 @@
         globalThis.games[globalThis.currentGameId] = { name: 'TEST', rounds: [], playerCreationOrder: [] };
       }
       globalThis.games[globalThis.currentGameId] = globalThis.games[globalThis.currentGameId] || { name: 'TEST', rounds: [], playerCreationOrder: [] };
-      globalThis.games[globalThis.currentGameId].localOnly = true;
-      try { if (typeof persistLocalGames === 'function') persistLocalGames(); } catch(e) { console.warn('Elimination tests: persistLocalGames failed', e); }
+      if (typeof persistLocalGames === 'function') persistLocalGames();
     } catch(e) { console.debug('Elimination tests: failed to force local mode', e); }
     const results = [];
 
@@ -192,7 +197,7 @@
       });
 
       let used25 = false;
-      let used25By = undefined;
+      let used25By;
       const runningTotals = {};
       for (const rd of globalThis.rounds) {
         const parsed = parseRoundData(rd);
@@ -226,6 +231,14 @@
         results.push('Test D passed');
       } catch (e) { results.push('Test D failed: '+e.message); }
     })();
+
+    // Restore server availability if it was on
+    try {
+      if (originalServerAvailable !== undefined && originalServerAvailable && typeof setServerAvailable === 'function') {
+         console.log('Restoring server connection...');
+         setServerAvailable(true);
+      }
+    } catch(e) { console.warn('Elimination tests: failed to restore serverAvailable', e); }
 
     console.log('Elimination tests results:', results);
     alert('Elimination tests finished. See console for details.');

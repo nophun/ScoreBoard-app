@@ -1943,29 +1943,32 @@
       
       // Allow tests and external scripts to set the module-scoped currentGameId
       function setCurrentGameId(id) {
-        try { currentGameId = id || null; } catch (e) { console.warn('setCurrentGameId: setting currentGameId failed', e); }
-        try { if (currentGameId) localStorage.setItem('cardgame-current-game', currentGameId); else localStorage.removeItem('cardgame-current-game'); } catch (e) { console.warn('setCurrentGameId: localStorage update failed', e); }
-        try { if (typeof loadCurrentGame === 'function') loadCurrentGame(); } catch (e) { console.warn('setCurrentGameId: loadCurrentGame failed', e); }
-        try { if (typeof renderGameList === 'function') renderGameList(); } catch (e) { console.warn('setCurrentGameId: renderGameList failed', e); }
+        currentGameId = id || null;
+        try {
+          if (currentGameId) localStorage.setItem('cardgame-current-game', currentGameId);
+          else localStorage.removeItem('cardgame-current-game');
+        } catch (e) { console.warn('setCurrentGameId: localStorage update failed', e); }
+        
+        if (typeof loadCurrentGame === 'function') loadCurrentGame();
+        if (typeof renderGameList === 'function') renderGameList();
       }
-      try { globalThis.setCurrentGameId = setCurrentGameId; } catch (e) { console.warn('Failed to expose setCurrentGameId on globalThis', e); }
+      globalThis.setCurrentGameId = setCurrentGameId;
       
       // Tests: allow syncing an array into the module-scoped `rounds` in-place
       function syncRoundsToModule(arr) {
-        try {
-          if (!Array.isArray(arr)) return;
-          rounds.length = 0;
-          arr.forEach(r => rounds.push(r));
-          try { globalThis.rounds = rounds; } catch (e) { console.warn('syncRoundsToModule: failed to expose rounds on globalThis', e); }
-        } catch (e) { console.warn('syncRoundsToModule failed', e); }
+        if (!Array.isArray(arr)) return;
+        rounds.length = 0;
+        arr.forEach(r => rounds.push(r));
+        // globalThis.rounds is a reference, if already exposed we don't need to re-expose
+        globalThis.rounds = rounds;
       }
-      try { globalThis.syncRoundsToModule = syncRoundsToModule; } catch (e) { console.warn('Failed to expose syncRoundsToModule on globalThis', e); }
+      globalThis.syncRoundsToModule = syncRoundsToModule;
       
       function setElimination25UsedBy(name) {
-        try { elimination25UsedBy = name || null; } catch (e) { console.warn('setElimination25UsedBy: failed to set value', e); }
-        try { globalThis.elimination25UsedBy = elimination25UsedBy; } catch (e) { console.warn('setElimination25UsedBy: failed to expose on globalThis', e); }
+        elimination25UsedBy = name || null;
+        globalThis.elimination25UsedBy = elimination25UsedBy;
       }
-      try { globalThis.setElimination25UsedBy = setElimination25UsedBy; } catch (e) { console.warn('Failed to expose setElimination25UsedBy on globalThis', e); }
+      globalThis.setElimination25UsedBy = setElimination25UsedBy;
       
       function toggleAddPlayerForm() {
         const header = document.querySelector('.players-column button.collapsible');
@@ -1993,6 +1996,7 @@
         if (game && Array.isArray(game.playerCreationOrder)) return game.playerCreationOrder.length;
         return 0;
       }
+      globalThis.getTotalPlayers = getTotalPlayers;
       
       // Helper: compute total rounds for a game (prefers explicit `rounds` array, falls back to `roundCount` metadata)
       function getTotalRounds(game) {
@@ -2026,11 +2030,10 @@
         const _maxDelay = 60000;
         
         function _wsUrl() {
-          try {
-            // Map API_BASE (http/https) to ws/wss and append '/ws' endpoint
-            if (!API_BASE) return null;
-            return API_BASE.replace(/^http/, 'ws') + '/ws';
-          } catch (e) { console.warn('wsUrl build failed', e); return null; }
+          // Map API_BASE (http/https) to ws/wss and append '/ws' endpoint
+          if (!API_BASE) return null;
+          if (typeof API_BASE !== 'string') return null;
+          return API_BASE.replace(/^http/, 'ws') + '/ws';
         }
         
         function handleMessage(payload) {
@@ -2054,7 +2057,7 @@
               games_metadata[sid] = games_metadata[sid] || {};
               games_metadata[sid].roundsLoaded = true;
               games_metadata[sid].roundCount = (games[sid].rounds || []).length;
-              try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+              persistLocalGames();
               renderGameList();
               renderGamesManagement();
               if (currentGameId === sid) {
@@ -2069,16 +2072,21 @@
           if (!serverAvailable) return;
           const url = _wsUrl();
           if (!url) return;
+          
+          if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+          
           try {
-            if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
             _ws = new WebSocket(url);
             globalThis._realtimeSocket = _ws;
             _ws.onopen = () => { console.log('Realtime WS connected'); _reconnectDelay = 1000; };
             _ws.onmessage = (ev) => {
-              try { const payload = JSON.parse(ev.data); handleMessage(payload); } catch (e) { console.warn('WS message parse failed', e); }
+              try { const payload = JSON.parse(ev.data); handleMessage(payload); } catch (e) { console.warn('WS handling failed', e); }
             };
             _ws.onclose = () => { console.warn('Realtime WS closed, reconnecting...'); globalThis._realtimeSocket = null; setTimeout(connect, _reconnectDelay); _reconnectDelay = Math.min(_maxDelay, _reconnectDelay * 2); };
-            _ws.onerror = (e) => { console.warn('Realtime WS error', e); try { _ws.close(); } catch (err) { console.warn('WebSocket close failed', err); } };
+            _ws.onerror = (e) => { 
+                console.warn('Realtime WS error', e); 
+                if (_ws) _ws.close(); 
+            };
           } catch (e) {
             console.warn('Realtime WS init failed', e);
             setTimeout(connect, _reconnectDelay);
@@ -2087,14 +2095,12 @@
         }
         
         function disconnect() {
-          try {
-            if (_ws) {
-              _ws.onclose = null;
-              _ws.close();
-              _ws = null;
-              globalThis._realtimeSocket = null;
-            }
-          } catch (e) { console.warn('disconnect failed', e); }
+          if (_ws) {
+            _ws.onclose = null;
+            _ws.close();
+            _ws = null;
+            globalThis._realtimeSocket = null;
+          }
         }
         
         // Public helpers
@@ -2105,35 +2111,25 @@
       // Update UI and document title to reflect connection state
       const _baseTitle = (document && document.title) ? document.title.replaceAll(/\s*\(Online\)|\s*\(Offline\)/g, '') : 'ScoreBoard';
       function updateConnectionIndicator() {
-        try {
-          const el = document.getElementById('connectionIndicator');
-          if (el) {
-            if (serverAvailable) {
-              el.textContent = 'Online';
-              el.classList.remove('offline');
-              el.classList.add('online');
-            } else {
-              el.textContent = 'Offline';
-              el.classList.remove('online');
-              el.classList.add('offline');
-            }
-          }
-          if (document && document.title !== undefined) {
-            document.title = _baseTitle + (serverAvailable ? ' (Online)' : ' (Offline)');
-          }
-        } catch (e) {
-          console.warn('updateConnectionIndicator failed', e);
+        const el = document.getElementById('connectionIndicator');
+        if (el) {
+          el.textContent = serverAvailable ? 'Online' : 'Offline';
+          el.classList.toggle('online', serverAvailable);
+          el.classList.toggle('offline', !serverAvailable);
+        }
+        if (document) {
+          document.title = _baseTitle + (serverAvailable ? ' (Online)' : ' (Offline)');
         }
         // Update server-action UI states when connection changes
-        try { updateServerActionStates(); } catch (e) { console.warn('updateServerActionStates call failed', e); }
+        if (typeof updateServerActionStates === 'function') {
+           updateServerActionStates();
+        }
       }
       
       // Helper to set module-scoped `serverAvailable` from external scripts/tests
       function setServerAvailable(v) {
-        try {
-          serverAvailable = !!v;
-          updateConnectionIndicator();
-        } catch (e) { console.warn('setServerAvailable failed', e); }
+        serverAvailable = !!v;
+        updateConnectionIndicator();
       }
       
       // initialize indicator
@@ -2188,24 +2184,20 @@
       }
       
       function updateServerActionStates() {
-        try {
-          const els = document.querySelectorAll('[data-server-action]');
-          els.forEach(el => {
-            if (serverAvailable) {
-              el.removeAttribute('disabled');
-              el.classList.remove('disabled-server-action');
-              el.title = el.dataset.serverTitle || '';
-            } else {
-              el.setAttribute('disabled', 'disabled');
-              el.classList.add('disabled-server-action');
-              // keep existing title if provided, otherwise set a default
-              el.dataset.serverTitle = el.title || 'Requires server connection';
-              el.title = 'Requires server connection';
-            }
-          });
-        } catch (e) {
-          console.warn('updateServerActionStates failed', e);
-        }
+        const els = document.querySelectorAll('[data-server-action]');
+        els.forEach(el => {
+          if (serverAvailable) {
+            el.removeAttribute('disabled');
+            el.classList.remove('disabled-server-action');
+            el.title = el.dataset.serverTitle || '';
+          } else {
+            el.setAttribute('disabled', 'disabled');
+            el.classList.add('disabled-server-action');
+            // keep existing title if provided, otherwise set a default
+            el.dataset.serverTitle = el.title || 'Requires server connection';
+            el.title = 'Requires server connection';
+          }
+        });
       }
       
       // Attempt to sync a local-only game to the server. On success remove the
@@ -2236,6 +2228,7 @@
             body: JSON.stringify(payload)
           });
           if (!resp.ok) throw new Error('Server responded ' + resp.status);
+          
           // Fetch canonical server record for this game to ensure we reflect server state
           try {
             const gresp = await fetch(API_BASE + '/api/games/' + encodeURIComponent(gameId));
@@ -2248,30 +2241,19 @@
               games_metadata[gameId] = games_metadata[gameId] || {};
               games_metadata[gameId].localOnly = false;
             } else {
-              // Server didn't return the object; fall back to marking non-local
-              game.localOnly = false;
-              games[gameId] = game;
-              games_metadata[gameId] = games_metadata[gameId] || {};
-              games_metadata[gameId].localOnly = false;
+              throw new Error('Canonical fetch failed');
             }
           } catch (e) {
-            console.warn('syncLocalGameToServer: fetching canonical record failed, marking game non-local', e);
-            // If fetching canonical record failed, at least mark as non-local
+            // If fetching canonical record failed, at least mark as non-local locally
+            console.warn('Canonical record fetch incomplete', e);
             game.localOnly = false;
             games[gameId] = game;
             games_metadata[gameId] = games_metadata[gameId] || {};
             games_metadata[gameId].localOnly = false;
           }
           
-          // Update stored games snapshot to reflect new non-local state
-          try {
-            localStorage.setItem(GAMES_STORAGE_KEY, JSON.stringify(games));
-          } catch (e) {
-            console.warn('Failed writing games to localStorage after sync', e);
-          }
-          
           // Persist current in-memory state and refresh UI
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed after sync', e); }
+          persistLocalGames();
           renderGameList();
           renderGamesManagement();
           alert('Game synced to server successfully');
@@ -2342,68 +2324,60 @@
       // Rename a player across game state: playerCreationOrder, rounds, eliminationLevels, lastReplacements
       function renamePlayerAcrossGame(originalName, newName) {
         if (!originalName || !newName || originalName === newName) return;
-        try {
-          // Update stored playerCreationOrder for the current game
-          if (currentGameId && games[currentGameId] && Array.isArray(games[currentGameId].playerCreationOrder)) {
-            const pco = games[currentGameId].playerCreationOrder;
-            for (let i = 0; i < pco.length; i++) {
-              if (pco[i] === originalName) pco[i] = newName;
-            }
-          }
-        } catch (e) { console.warn('renamePlayerAcrossGame: update playerCreationOrder failed', e); }
         
-        try {
-          // Update any stored rounds that reference the player name
-          if (Array.isArray(rounds)) {
-            for (const round of rounds) {
-              if (round && Array.isArray(round.players)) {
-                for (const [i, p] of round.players.entries()) {
-                  if (p === originalName) {
-                    round.players[i] = newName;
-                  }
-                }
+        // Update stored playerCreationOrder for the current game
+        if (currentGameId && games[currentGameId] && Array.isArray(games[currentGameId].playerCreationOrder)) {
+          const pco = games[currentGameId].playerCreationOrder;
+          for (let i = 0; i < pco.length; i++) {
+            if (pco[i] === originalName) pco[i] = newName;
+          }
+        }
+        
+        // Update any stored rounds that reference the player name
+        if (Array.isArray(rounds)) {
+          for (const round of rounds) {
+            if (round && Array.isArray(round.players)) {
+              for (const [i, p] of round.players.entries()) {
+                if (p === originalName) round.players[i] = newName;
               }
             }
           }
-        } catch (e) { console.warn('renamePlayerAcrossGame: update rounds failed', e); }
+        }
         
-        try {
-          // Transfer elimination level tracking for the player
-          if (eliminationLevels && Object.hasOwn(eliminationLevels, originalName)) {
-            const val = eliminationLevels[originalName];
-            delete eliminationLevels[originalName];
-            eliminationLevels[newName] = val;
-          }
-        } catch (e) { console.warn('renamePlayerAcrossGame: update eliminationLevels failed', e); }
+        // Transfer elimination level tracking for the player
+        if (eliminationLevels && Object.hasOwn(eliminationLevels, originalName)) {
+          const val = eliminationLevels[originalName];
+          delete eliminationLevels[originalName];
+          eliminationLevels[newName] = val;
+        }
         
-        try {
-          // Update lastReplacements entries
-          if (Array.isArray(lastReplacements)) {
-            lastReplacements.forEach(rep => {
-              if (!rep) return;
-              if (rep.eliminated === originalName) rep.eliminated = newName;
-              if (rep.replacement === originalName) rep.replacement = newName;
-            });
-          }
-        } catch (e) { console.warn('renamePlayerAcrossGame: update lastReplacements failed', e); }
-        try {
-          // If the player who triggered the 25-point rule is being renamed, update that reference
-          if (elimination25UsedBy === originalName) {
-            elimination25UsedBy = newName;
-            try { setElimination25UsedBy(newName); } catch (e) { console.warn('renamePlayerAcrossGame: failed to set elimination25UsedBy via setter', e); }
-            if (currentGameId && games[currentGameId]) {
-              games[currentGameId].elimination25UsedBy = newName;
-            }
-          }
-        } catch (e) { console.warn('renamePlayerAcrossGame: update elimination25UsedBy failed', e); }
-        try {
-          // Ensure persisted game record reflects updated rounds on server/local snapshot
+        // Update lastReplacements entries
+        if (Array.isArray(lastReplacements)) {
+          lastReplacements.forEach(rep => {
+            if (!rep) return;
+            if (rep.eliminated === originalName) rep.eliminated = newName;
+            if (rep.replacement === originalName) rep.replacement = newName;
+          });
+        }
+        
+        // If the player who triggered the 25-point rule is being renamed, update that reference
+        if (elimination25UsedBy === originalName) {
+          elimination25UsedBy = newName;
+          if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy(newName);
           if (currentGameId && games[currentGameId]) {
-            games[currentGameId].rounds = rounds;
-            // Try to persist full game (including rounds) to server; falls back to local persist
-            try { saveGame(currentGameId, true).catch(err => { console.warn('saveGame(includeRounds) failed', err); persistLocalGames(); }); } catch (e) { console.warn('saveGame(includeRounds) invocation failed', e); persistLocalGames(); }
+            games[currentGameId].elimination25UsedBy = newName;
           }
-        } catch (e) { console.warn('renamePlayerAcrossGame: persist updated rounds failed', e); }
+        }
+        
+        // Ensure persisted game record reflects updated rounds on server/local snapshot
+        if (currentGameId && games[currentGameId]) {
+          games[currentGameId].rounds = rounds;
+          // Try to persist full game (including rounds) to server; falls back to local persist
+          saveGame(currentGameId, true).catch(err => {
+            console.warn('saveGame(includeRounds) failed', err);
+            persistLocalGames();
+          });
+        }
       }
 
       // Generic edit modal handlers
@@ -2459,8 +2433,10 @@
             players.queue.forEach((p, i) => { if (!(playerType === 'queue' && i === index)) allNames.push(p); });
             if (allNames.includes(newVal)) { alert('A player with this name already exists'); return; }
             if (playerType === 'active') players.active[index] = newVal; else players.queue[index] = newVal;
-            try { renamePlayerAcrossGame(originalName, newVal); } catch (e) { console.warn('renamePlayerAcrossGame failed', e); }
-            try { saveCurrentGame(); } catch (e) { console.warn('saveCurrentGame failed', e); }
+            
+            renamePlayerAcrossGame(originalName, newVal);
+            saveCurrentGame();
+            
             renderPlayers();
             updateGameDisplay();
           } else if (state.kind === 'game') {
@@ -2471,19 +2447,16 @@
               if (id !== gameId && g && g.name === newVal) { alert('A game with this name already exists'); return; }
             }
             games[gameId].name = newVal;
-            try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+            persistLocalGames();
             // Persist the game's metadata and handle failures explicitly.
-            saveGame(gameId, false).catch(err => {
-              console.warn('saveGame failed', err);
-              try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
-            });
+            saveGame(gameId, false).catch(err => console.warn('saveGame failed', err));
             renderGamesManagement();
             if (currentGameId === gameId) { const el = document.getElementById('gameTitle'); if (el) el.textContent = newVal; }
           }
           
           // Close modal and cleanup history state
           const modal = document.getElementById('genericEditModal'); if (modal) modal.style.display = 'none';
-          try { if (history.state && history.state.modal === 'genericEdit') history.back(); } catch (e) { console.warn('confirmGenericEditModal: history.back failed', e); }
+          if (history.state && history.state.modal === 'genericEdit') history.back();
           globalThis._genericEdit = null;
         } catch (e) { console.warn('confirmGenericEditModal failed', e); }
       }
@@ -2851,22 +2824,20 @@
       // Helper: initialize runtime metadata for local-only games
       // `prefix` is used for contextual logging (e.g. 'Immediate local load')
       function initLocalOnlyGamesMetadata(localOnlyGames, prefix) {
-        try {
-          Object.keys(localOnlyGames).forEach(id => {
-            try {
-              games_metadata[id] = games_metadata[id] || {};
-              games_metadata[id].roundsLoaded = true;
-              let _rc = 0;
-              if (Array.isArray(localOnlyGames[id].rounds)) {
-                _rc = localOnlyGames[id].rounds.length;
-              } else if (typeof localOnlyGames[id].roundCount === 'number') {
-                _rc = localOnlyGames[id].roundCount;
-              }
-              games_metadata[id].roundCount = _rc;
-              games_metadata[id].localOnly = true;
-            } catch (e) { console.warn(prefix + ': per-game metadata init failed for', id, e); }
-          });
-        } catch (e) { console.warn(prefix + ': failed to initialize games_metadata', e); }
+        Object.keys(localOnlyGames).forEach(id => {
+          try {
+            games_metadata[id] = games_metadata[id] || {};
+            games_metadata[id].roundsLoaded = true;
+            let _rc = 0;
+            if (Array.isArray(localOnlyGames[id].rounds)) {
+              _rc = localOnlyGames[id].rounds.length;
+            } else if (typeof localOnlyGames[id].roundCount === 'number') {
+              _rc = localOnlyGames[id].roundCount;
+            }
+            games_metadata[id].roundCount = _rc;
+            games_metadata[id].localOnly = true;
+          } catch (e) { console.warn(prefix + ': per-game metadata init failed for', id, e); }
+        });
       }
       
       // Helper: compute elimination indicator info
@@ -3255,11 +3226,11 @@
             persistLocalGames();
           }).catch(err => {
             console.warn('saveGames: remote save failed, falling back to localStorage', err);
-            try { persistLocalGames(); } catch (e) { console.warn('localStorage fallback failed', e); }
+            persistLocalGames();
           });
         } catch (e) {
           console.warn('saveGames: unexpected error while saving remotely, falling back to local persist', e);
-          try { persistLocalGames(); } catch (err) { console.warn('saveGames: failed to persist locally', err); }
+          persistLocalGames();
         }
       }
       
@@ -3271,7 +3242,7 @@
         const game = games[gameId];
         // If local-only or server not available, persist locally
         if (!serverAvailable || game.localOnly) {
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          persistLocalGames();
           return Promise.resolve();
         }
         
@@ -3285,17 +3256,20 @@
           body: JSON.stringify(payload)
         }).then(resp => {
           if (!resp.ok) throw new Error('saveGame: remote save failed: ' + resp.status);
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          persistLocalGames();
           return resp.json();
         }).catch(err => {
           console.warn('saveGame: remote save failed, falling back to local persist', err);
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          persistLocalGames();
           throw err;
         });
       }
       
       function formatTimestamp(ts) {
-        const d = new Date(Number(ts) || 0);
+        if (!ts) return '';
+        const num = Number(ts);
+        if (Number.isNaN(num)) return '';
+        const d = new Date(num);
         if (!d || Number.isNaN(d.getTime())) return '';
         const dd = String(d.getDate()).padStart(2, '0');
         const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -3304,6 +3278,7 @@
         const min = String(d.getMinutes()).padStart(2, '0');
         return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
       }
+      globalThis.formatTimestamp = formatTimestamp;
       
       function loadCurrentGame() {
         if (Object.keys(games).length === 0) {
@@ -3402,16 +3377,10 @@
           // Persist who triggered the 25-point elimination (if any)
           games[currentGameId].elimination25UsedBy = elimination25UsedBy || null;
           if (alwaysPersist) {
-            try {
-              // Persist only the current game's metadata to avoid sending all games
-              saveGame(currentGameId, false).catch(err => {
-                console.warn('saveCurrentGame: saveGame failed, falling back to local persist', err);
-                try { persistLocalGames(); } catch (err) { console.warn('persistLocalGames failed', err); }
-              });
-            } catch (e) {
-              console.warn('saveCurrentGame: unexpected synchronous error while saving current game, falling back to local persist', e);
-              try { persistLocalGames(); } catch (err) { console.warn('persistLocalGames failed', err); }
-            }
+            // Persist only the current game's metadata to avoid sending all games
+            saveGame(currentGameId, false).catch(err => {
+              console.warn('saveCurrentGame: saveGame failed', err);
+            });
           }
         }
       }
@@ -3727,32 +3696,30 @@
             if (!resp.ok) throw new Error('Remote delete failed: ' + resp.status);
             console.log('deleteGame: remote delete succeeded for', gameId);
             // Persist local snapshot as backup (without deleted game)
-            try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+            persistLocalGames();
           }).catch(err => {
             console.warn('deleteGame: remote delete failed, restoring local copy', err);
             // Restore local copy to avoid data loss
             if (backup) games[gameId] = backup;
-            try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
-            alert('Failed to delete game on server: ' + (err && err.message ? err.message : 'unknown'));
+            persistLocalGames();
+            alert('Failed to delete game: ' + (err && err.message ? err.message : 'unknown'));
           }).finally(() => {
             // Reinitialize games to refresh state from server and stay on Games Management
-            try {
-              initializeGames().then(() => {
-                try { showGamesManagement(); } catch (e) { console.warn('post-initializeGames handling failed', e); renderGameList(); renderGamesManagement(); render(); }
-              }).catch(e => { throw e; });
-            } catch (e) {
+            initializeGames().then(() => {
+              showGamesManagement();
+            }).catch(e => {
               console.warn('initializeGames after delete failed', e);
               renderGameList();
               renderGamesManagement();
               render();
-            }
+            });
           });
         } else {
           // Local-only game or offline: persist local deletion only
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          persistLocalGames();
           // Reinitialize games to refresh state (local-only deletion) and stay on Games Management
           initializeGames().then(() => {
-            try { showGamesManagement(); } catch (e) { console.warn('post-initializeGames handling failed', e); renderGameList(); renderGamesManagement(); render(); }
+            showGamesManagement();
           }).catch(e => {
             console.warn('initializeGames after local delete failed', e);
             renderGameList();
@@ -4302,7 +4269,7 @@
           });
         } else {
           // Local-only or offline: persist locally
-          try { persistLocalGames(); } catch (e) { console.warn('persistLocalGames failed', e); }
+          persistLocalGames();
         }
         
         updateGameDisplay();
@@ -5220,7 +5187,7 @@
       await initializeGames();
       // If server is available, start realtime WebSocket updates (server must provide WS at API_BASE + '/ws')
       if (serverAvailable && typeof globalThis.initRealtimeWebSocket === 'function') {
-        try { globalThis.initRealtimeWebSocket(); } catch (e) { console.warn('initRealtimeWebSocket failed', e); }
+        globalThis.initRealtimeWebSocket();
       }
       // If server is not available, ensure we only expose local-only games.
       // If local games were already loaded synchronously earlier, keep them and skip extra filtering.
@@ -5431,7 +5398,7 @@
       'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
       'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
       // Expose runtime state and helper functions so tests can run against the live app
-      'players','rounds','games','currentGameId','eliminationLevels','elimination25UsedBy','parseRoundData','calculatePlayerTotals','calculatePoints','reverseCalculateCards','computeTotals','computeCumulativeSnapshots','loadCurrentGame',
+      'players','rounds','games','currentGameId','eliminationLevels','elimination25UsedBy','parseRoundData','calculatePlayerTotals','calculatePoints','reverseCalculateCards','computeTotals','computeCumulativeSnapshots','loadCurrentGame','formatTimestamp','getTotalPlayers',
       'setCurrentGameId','persistLocalGames','saveCurrentGame','setServerAvailable','runEliminationTests','runUnitTests','runIntegrationTests'
       ];
       
