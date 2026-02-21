@@ -1493,7 +1493,7 @@
     <div id="gameView">
       <div class="game-header">
         <h2 id="gameTitle">Score Sheet</h2>
-        <button id="addRoundBtn" class="btn-large bg-green" onclick="showAddRoundModal()">▶️ Start Round</button>
+        <button id="addRoundBtn" class="btn-large bg-green" onclick="showAddRoundModal()">▶️ Round</button>
       </div>
       
       <div id="playerTiles" class="player-tiles-container">
@@ -1821,7 +1821,7 @@
       </div>
       
       <div class="new-game-actions">
-        <button onclick="cancelNewGame()" class="btn-large bg-grey">Cancel</button>
+        <button onclick="clearNewGameInputs()" class="btn-large bg-grey">Clear</button>
         <button onclick="createNewGameWithPlayers()" class="btn-large bg-blue">Create Game</button>
       </div>
     </div>
@@ -2947,10 +2947,10 @@
         const nextRoundNumber = rounds.length + 1;
         if (activePlayerCount === 0) {
           addRoundBtn.disabled = true;
-          addRoundBtn.textContent = '▶️ Start Round 1 (Need Players)';
+          addRoundBtn.textContent = '▶️ Round 1 (Need Players)';
         } else {
           addRoundBtn.disabled = false;
-          addRoundBtn.textContent = `▶️ Start Round ${nextRoundNumber}`;
+          addRoundBtn.textContent = `▶️ Round ${nextRoundNumber}`;
         }
       }
       
@@ -3427,8 +3427,14 @@
         document.getElementById('newGameNameInput').focus();
       }
       
-      function cancelNewGame() {
-        showGame();
+      function clearNewGameInputs() {
+        const nameInput = document.getElementById('newGameNameInput');
+        if (nameInput) {
+          nameInput.value = '';
+          nameInput.focus();
+        }
+        const inputs = document.querySelectorAll('.player-name-input');
+        inputs.forEach(input => { input.value = ''; });
       }
       
       function showNoGames() {
@@ -5393,7 +5399,7 @@
       const __expose = [
       'toggleSidebar','closeSidebar','showGame','showPlayers','showStatistics','showHistory',
       'showNewGame','showGamesManagement','showAddRoundModal','closeAddRoundModal','confirmRound','deleteLastRound','addPlayer','addPlayerInput',
-      'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame',
+      'removePlayerInput','deleteGame','createNewGameWithPlayers','createNewGame','clearNewGameInputs',
       'cancelEditPlayerName','activatePlayerToSeat','activatePlayer','editPlayerName','editGameName','openGenericEditModal','confirmGenericEditModal','cancelGenericEditModal','genericEditModal',
       'demotePlayer','toggleAddPlayerForm','switchToGameAndView','showReplacementModal','closeReplacementModal',
       'toggleHistoryView','updatePointsDisplay','updateConnectionIndicator','syncLocalGameToServer',
