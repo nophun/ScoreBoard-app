@@ -37,6 +37,13 @@
       position: relative;
     }
     
+    /* Global styles for main content headers to ensure alignment */
+    .view-header,
+    .main-content > h2:first-child,
+    .game-header {
+       margin-top: 0;
+    }
+
     /* Prevent the back-to-game button text from wrapping on narrow screens */
     button[onclick="showGame()"] {
       white-space: nowrap;
@@ -912,7 +919,6 @@
     /* New Game View Styling */
     .new-game-view {
       display: none;
-      padding: 20px;
     }
     
     .new-game-section {
@@ -1436,18 +1442,6 @@
         padding: 4px;
       }
     }
-    
-    @media (max-width: 480px) {
-      .view-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-      }
-      
-      .view-header > div {
-        width: 100%;
-      }
-    }
   </style>
 </head>
 <body>
@@ -1545,7 +1539,7 @@
     <!-- Main Game View -->
     <div id="gameView">
       <div class="game-header">
-        <h2 id="gameTitle">Score Sheet</h2>
+        <h2 style="margin: 0;" id="gameTitle">Score Sheet</h2>
         <button id="addRoundBtn" class="btn-large bg-green" onclick="showAddRoundModal()">
             <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-play-circle"></use></svg> Round
         </button>
@@ -1667,7 +1661,7 @@
     
     <!-- No Games View (shown when there are no games) -->
     <div id="noGamesView" style="display:none; padding: 40px; text-align:center;">
-      <h2>No games</h2>
+      <h2 style="margin: 0;">No games</h2>
       <p style="color:#666; max-width:600px; margin: 0 auto 16px;">There are no games saved. Create a new game to get started.</p>
       <button class="btn-large bg-blue" onclick="showNewGame()">Create New Game</button>
     </div>
@@ -1740,8 +1734,11 @@
     </div>
     
     <div id="gamesManagementView" class="games-management-view" style="display: none;">
-      <div class="view-header">
-        <h2>Games Management</h2>
+      <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Games Management</h2>
+        <button class="btn-large bg-blue" onclick="showGame()">
+            <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
+        </button>
       </div>
       
       <p style="font-weight: 500; margin-bottom: 15px; color: #666;">Manage all your games. Click on a game to switch to it, or delete games you no longer need.</p>
@@ -1847,8 +1844,13 @@
     
     <!-- New Game View -->
     <div id="newGameView" class="new-game-view">
-      <h2>Create New Game</h2>
-      
+      <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Create New Game</h2>
+        <button class="btn-large bg-blue" onclick="showGame()">
+            <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
+        </button>
+      </div>
+
       <div class="new-game-section">
         <h3>Game Details</h3>
         <div class="form-group">
@@ -2774,6 +2776,13 @@
       }
       
       function renderPlayers() {
+        // Update game name in title
+        const currentGame = games[currentGameId];
+        const playersTitle = document.getElementById("playersTitle");
+        if (playersTitle && currentGame) {
+          playersTitle.textContent = `${currentGame.name} - Player Management`;
+        }
+
         // Calculate player stats first
         const playerStats = calculatePlayerTileStats();
         
@@ -3089,12 +3098,27 @@
       
       // Common function to switch between views
       function switchView(viewId) {
-        const views = ['gameView', 'historyView', 'statisticsView', 'playersView', 'newGameView', 'gamesManagementView', 'noGamesView'];
-        views.forEach(id => {
+        const viewMap = {
+          'gameView': 'game',
+          'historyView': 'history',
+          'statisticsView': 'statistics',
+          'playersView': 'players',
+          'newGameView': 'newgame',
+          'gamesManagementView': 'games',
+          'noGamesView': 'nogames'
+        };
+
+        Object.keys(viewMap).forEach(id => {
           const el = document.getElementById(id);
           if (!el) return;
           el.style.display = id === viewId ? 'block' : 'none';
         });
+
+        // Update history state
+        const viewName = viewMap[viewId];
+        if (viewName) {
+           pushViewState(viewName);
+        }
       }
       
       // Common function to calculate player totals across all rounds
@@ -3150,40 +3174,44 @@
       }
       
       function getCurrentView() {
+        if (typeof document === 'undefined') return 'game';
         if (document.getElementById('gameView').style.display !== 'none') return 'game';
-        if (document.getElementById('historyView').style.display === 'block') return 'history';
-        if (document.getElementById('statisticsView').style.display === 'block') return 'statistics';
-        if (document.getElementById('playersView').style.display === 'block') return 'players';
+        if (document.getElementById('historyView').style.display !== 'none') return 'history';
+        if (document.getElementById('statisticsView').style.display !== 'none') return 'statistics';
+        if (document.getElementById('playersView').style.display !== 'none') return 'players';
+        if (document.getElementById('newGameView').style.display !== 'none') return 'newgame';
+        if (document.getElementById('gamesManagementView').style.display !== 'none') return 'games';
+        if (document.getElementById('noGamesView').style.display !== 'none') return 'nogames';
         return 'game';
       }
       
-        // Helper: apply preloaded local-only games parsed from storage.
-        // If `preserveCurrent` is true, keep existing `currentGameId` when possible;
-        // otherwise choose the last-open or first available local-only game.
-        function applyPreloadedLocalGames(parsed, preserveCurrent) {
-          try {
-            if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) return false;
-            const localOnlyGames = {};
-            Object.keys(parsed).forEach(id => {
-              try {
-                if (parsed[id] && parsed[id].localOnly === true) localOnlyGames[id] = parsed[id];
-              } catch (e) { console.warn('applyPreloadedLocalGames: skipping malformed game entry', id, parsed?.[id], e); }
-            });
-            games = localOnlyGames;
-            // Initialize runtime metadata for these preloaded local-only games
+      // Helper: apply preloaded local-only games parsed from storage.
+      // If `preserveCurrent` is true, keep existing `currentGameId` when possible;
+      // otherwise choose the last-open or first available local-only game.
+      function applyPreloadedLocalGames(parsed, preserveCurrent) {
+        try {
+          if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) return false;
+          const localOnlyGames = {};
+          Object.keys(parsed).forEach(id => {
             try {
-              initLocalOnlyGamesMetadata(localOnlyGames, 'applyPreloadedLocalGames');
-            } catch (e) {console.warn('applyPreloadedLocalGames: failed to init games_metadata for preloaded local games', e); }
+              if (parsed[id] && parsed[id].localOnly === true) localOnlyGames[id] = parsed[id];
+            } catch (e) { console.warn('applyPreloadedLocalGames: skipping malformed game entry', id, parsed?.[id], e); }
+          });
+          games = localOnlyGames;
+          // Initialize runtime metadata for these preloaded local-only games
+          try {
+            initLocalOnlyGamesMetadata(localOnlyGames, 'applyPreloadedLocalGames');
+          } catch (e) {console.warn('applyPreloadedLocalGames: failed to init games_metadata for preloaded local games', e); }
 
-            const last = localStorage.getItem('cardgame-current-game');
-            if (preserveCurrent) {
-              currentGameId = (last && games[last]) ? last : currentGameId;
-            } else {
-              currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
-            }
-            return true;
-          } catch (e) { console.warn('applyPreloadedLocalGames failed', e); return false; }
-        }
+          const last = localStorage.getItem('cardgame-current-game');
+          if (preserveCurrent) {
+            currentGameId = (last && games[last]) ? last : currentGameId;
+          } else {
+            currentGameId = (last && games[last]) ? last : Object.keys(games)[0] || null;
+          }
+          return true;
+        } catch (e) { console.warn('applyPreloadedLocalGames failed', e); return false; }
+      }
       
       function initializeGames() {
         // Load games from server (or create default if none). This function performs an initial sync with the backend.
@@ -4797,7 +4825,7 @@
         } catch (err) { console.warn('Modal overlay click handler failed', err); }
       });
       
-      // Helper: push a view state onto history (used for SPA navigation)
+// Helper: push a view state onto history (used for SPA navigation)
       function pushViewState(view) {
         try {
           if (!history.state || history.state.view !== view) {
@@ -4867,7 +4895,6 @@
       function showGamesManagement() {
         switchView('gamesManagementView');
         renderGamesManagement();
-        try { pushViewState('games'); } catch (e) { console.warn('showGamesManagement: pushViewState failed', e); }
         closeSidebar();
       }
       // Helpers to split confirmRound logic for readability and testability
