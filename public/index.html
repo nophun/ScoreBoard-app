@@ -1360,22 +1360,29 @@
       color: #333;
     }
     
+
+    /* Header action buttons hidden on desktop */
+    .header-action-btn {
+      display: none !important;
+    }
+
     /* Mobile Responsive Styles */
     @media (max-width: 768px) {
       body {
         overflow-x: hidden;
       }
-      
+
       .app-header {
         display: flex;
+         align-items: center;
       }
-      
+
       .main-content {
         padding-top: 71px;
         padding-left: 15px;
         padding-right: 15px;
       }
-      
+
       .sidebar {
         position: fixed;
         top: 56px; /* sit below the fixed app header */
@@ -1385,46 +1392,46 @@
         transform: translateX(-100%);
         box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2);
       }
-      
+
       .sidebar.open {
         transform: translateX(0);
       }
-            
+
       .sidebar-overlay.active {
         display: block;
       }
-      
+
       .sidebar-close {
         display: block;
       }
-      
+
       .player-tiles-container {
         gap: 10px;
         max-width: 100%;
         margin: 20px 10px;
       }
-      
+
       .player-tile {
         max-width: 180px;
         padding: 12px;
         font-size: 14px;
       }
-      
+
       /* Keep diamond layout on mobile */
-      
+
       .players-columns {
         grid-template-columns: 1fr;
       }
-      
+
       .score-inputs {
         gap: 10px;
         max-width: 100%;
       }
-      
+
       .score-input-group {
         max-width: 100px;
       }
-      
+
       .modal-content {
         width: 95%;
         /* push modal lower to avoid fixed mobile header overlapping */
@@ -1432,17 +1439,63 @@
         margin-left: auto;
         transform: none;
       }
-      
+
       .history-table {
         font-size: 12px;
       }
-      
+
       .history-table th,
       .history-table td {
         padding: 4px;
       }
+      
+      /* Reset header action visibility logic for mobile */
+      .header-action-btn {
+        /* Allow JS to control display, but start hidden */
+        display: none; 
+      }
+      
+      /* Start showing header buttons when JS enables them */
+      .header-action-btn.visible {
+        display: inline-flex !important;
+        align-items: center;
+        margin-right: 10px;
+        padding: 6px 12px;
+        font-size: 14px;
+        line-height: normal;
+      }
+
+      /* Hide original buttons on mobile */
+      #gameView .game-header button#addRoundBtn,
+      .view-header button.bg-green,
+      #historyView button[onclick="showGame()"],
+      #statisticsView button[onclick="showGame()"],
+      #playersView button[onclick="showGame()"],
+      .games-management-view button[onclick="showGame()"],
+      .new-game-view button[onclick="showGame()"] {
+        display: none;
+      }
+      
+      /* Adjust header actions alignment */
+      .header-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+      }
+      
+      /* Ensure title doesn't crowd buttons */
+      .app-header h1 {
+        flex: 1;
+        text-align: left;
+        margin-left: 10px;
+        font-size: 18px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
   </style>
+
 </head>
 <body>
   <!-- SVG Sprite Sheet -->
@@ -1489,7 +1542,16 @@
   <div class="app-header">
     <button class="menu-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
     <h1>ScoreBoard</h1>
-    <div style="width: 44px;"></div><!-- Spacer for centering -->
+    
+    <div class="header-actions">
+      <!-- Mobile Header Buttons -->
+      <button id="headerAddRoundBtn" class="btn-large bg-green header-action-btn" onclick="showAddRoundModal()" style="display: none;">
+          <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-play-circle"></use></svg> Round
+      </button>
+      <button id="headerGameBtn" class="btn-large bg-green header-action-btn" onclick="showGame()" style="display: none;">
+          <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
+      </button>
+    </div>
   </div>
   
   <button class="sidebar-overlay" onclick="closeSidebar()" aria-label="Close sidebar"></button>
@@ -1670,7 +1732,7 @@
     <div id="historyView" class="history-view">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h2 id="historyTitle" style="margin: 0;">Game History</h2>
-        <button class="btn-large bg-blue" onclick="showGame()">
+        <button class="btn-large bg-green" onclick="showGame()">
           <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
         </button>
       </div>
@@ -1736,7 +1798,7 @@
     <div id="gamesManagementView" class="games-management-view" style="display: none;">
       <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h2 style="margin: 0;">Games Management</h2>
-        <button class="btn-large bg-blue" onclick="showGame()">
+        <button class="btn-large bg-green" onclick="showGame()">
             <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
         </button>
       </div>
@@ -1752,7 +1814,7 @@
     <div id="statisticsView" class="statistics-view">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h2 id="statisticsTitle" style="margin: 0;">Game Statistics</h2>
-        <button class="btn-large bg-blue" onclick="showGame()">
+        <button class="btn-large bg-green" onclick="showGame()">
           <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
         </button>
       </div>
@@ -1797,7 +1859,7 @@
     <div id="playersView" class="players-view">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h2 id="playersTitle" style="margin: 0;">Player Management</h2>
-        <button class="btn-large bg-blue" onclick="showGame()">
+        <button class="btn-large bg-green" onclick="showGame()">
           <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
         </button>
       </div>
@@ -1846,7 +1908,7 @@
     <div id="newGameView" class="new-game-view">
       <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h2 style="margin: 0;">Create New Game</h2>
-        <button class="btn-large bg-blue" onclick="showGame()">
+        <button class="btn-large bg-green" onclick="showGame()">
             <svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-grid"></use></svg> Game
         </button>
       </div>
@@ -3036,17 +3098,31 @@
       // Helper: update add round button
       function updateAddRoundButton(activePlayerCount) {
         const addRoundBtn = document.getElementById('addRoundBtn');
-        if (!addRoundBtn) return;
+        const headerAddRoundBtn = document.getElementById('headerAddRoundBtn');
+        
         const nextRoundNumber = rounds.length + 1;
         const iconSvg = `<svg width="20" height="20" style="vertical-align: middle; margin-right: 6px;"><use href="#icon-play-circle"></use></svg>`;
-        if (activePlayerCount === 0) {
-          addRoundBtn.disabled = true;
-          addRoundBtn.textContent = '';
-          addRoundBtn.insertAdjacentHTML('afterbegin', iconSvg + ' Round 1 (Need Players)');
-        } else {
-          addRoundBtn.disabled = false;
-          addRoundBtn.textContent = '';
-          addRoundBtn.insertAdjacentHTML('afterbegin', iconSvg + ` Round ${nextRoundNumber}`);
+        
+        if (addRoundBtn) {
+          if (activePlayerCount === 0) {
+            addRoundBtn.disabled = true;
+            addRoundBtn.textContent = '';
+            addRoundBtn.insertAdjacentHTML('afterbegin', iconSvg + ' Round 1 (Need Players)');
+          } else {
+            addRoundBtn.disabled = false;
+            addRoundBtn.textContent = '';
+            addRoundBtn.insertAdjacentHTML('afterbegin', iconSvg + ` Round ${nextRoundNumber}`);
+          }
+        }
+
+        if (headerAddRoundBtn) {
+          if (activePlayerCount === 0) {
+            headerAddRoundBtn.disabled = true;
+            headerAddRoundBtn.innerHTML = iconSvg + ' Round';
+          } else {
+            headerAddRoundBtn.disabled = false;
+            headerAddRoundBtn.innerHTML = iconSvg + ` Round ${nextRoundNumber}`;
+          }
         }
       }
       
@@ -3118,6 +3194,27 @@
         const viewName = viewMap[viewId];
         if (viewName) {
            pushViewState(viewName);
+        }
+        
+        updateHeaderActions(viewId);
+      }
+
+      function updateHeaderActions(viewId) {
+        const addRoundBtn = document.getElementById('headerAddRoundBtn');
+        const gameBtn = document.getElementById('headerGameBtn');
+        
+        if (addRoundBtn) {
+          addRoundBtn.classList.remove('visible');
+          if (viewId === 'gameView') {
+            addRoundBtn.classList.add('visible');
+          }
+        }
+        
+        if (gameBtn) {
+          gameBtn.classList.remove('visible');
+          if (['historyView', 'statisticsView', 'playersView', 'gamesManagementView', 'newGameView'].includes(viewId)) {
+            gameBtn.classList.add('visible');
+          }
         }
       }
       
