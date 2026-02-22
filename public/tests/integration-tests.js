@@ -64,7 +64,8 @@
       }
     } catch (e) { console.warn('Failed to snapshot previous game', e); }
     const tempGameId = 'test-temp-' + Date.now();
-    globalThis.games[tempGameId] = { name: 'INTEGRATION-TEST-' + Date.now(), rounds: [], playerCreationOrder: [], createdAt: Date.now(), roundsLoaded: true, localOnly: true };
+    globalThis.games[tempGameId] = { name: 'INTEGRATION-TEST-' + Date.now(), rounds: [], playerCreationOrder: [], createdAt: Date.now(), localOnly: true };
+    try { globalThis.games_metadata = globalThis.games_metadata || {}; globalThis.games_metadata[tempGameId] = { roundsLoaded: true, roundCount: 0 }; } catch (e) { console.warn('Failed to set games_metadata in test', e); }
     globalThis.currentGameId = tempGameId;
     // If the app exposes a setter to update the module-scoped currentGameId, call it
     try { if (typeof setCurrentGameId === 'function') setCurrentGameId(tempGameId); } catch (e) { console.warn('setCurrentGameId failed', e); }
@@ -115,9 +116,9 @@
           assertEqual(t.players.active[1], 'Q2', 'B should be replaced by Q2');
           assertEqual(t.players.queue[t.players.queue.length-2], 'A', 'A should be pushed to queue end');
           assertEqual(t.players.queue[t.players.queue.length-1], 'B', 'B should be pushed to queue end');
-          const levelA = t.eliminationLevels?.A;
-          assertEqual(levelA === undefined || levelA === 0, true, 'eliminationLevels.A should be undefined or 0');
+          assertEqual(t.eliminationLevels['A'], 1, 'A should have reached 1 elimination level');
           assertEqual(t.eliminationLevels['B'], 1, 'B should have reached 1 elimination level');
+          assertEqual(t.elimination25UsedBy, 'A', '25-rule should be used by A');
           results.push('confirmRound replacement passed');
         } catch (e) { results.push('confirmRound replacement failed: '+e.message); }
       } catch (err) { results.push('confirmRound flow error: '+err.message); }
@@ -140,7 +141,7 @@
             { players:['A','B','C','D'], points: pts2, cards: cards2 }
           ];
           try { syncRoundsToModule(roundsArr); } catch (e) { console.warn('syncRoundsToModule failed', e); }
-          setElimination25Used(true);
+          if (typeof setElimination25UsedBy === 'function') setElimination25UsedBy('A'); else { globalThis.elimination25UsedBy = 'A'; t.elimination25UsedBy = 'A'; }
         } catch(e) {
           console.warn('Failed to prepare rounds for deleteLastRound test', e);
         }
@@ -155,7 +156,7 @@
         await sleep(20);
 
         try {
-          assertEqual(!!t.elimination25Used, false, '25-rule should be unset after deleting causing round');
+          assertEqual(!!(t.elimination25UsedBy || globalThis.elimination25UsedBy), false, '25-rule should be unset after deleting causing round');
           results.push('deleteLastRound recompute passed');
         } catch (e) { results.push('deleteLastRound recompute failed: '+e.message); }
 

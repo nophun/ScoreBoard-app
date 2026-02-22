@@ -101,6 +101,46 @@
       } catch (e) { results.push('computeCumulativeSnapshots tests failed: '+e.message); }
     })();
 
+    // Test getTotalPlayers
+    (function(){
+      const func = globalThis.getTotalPlayers || (typeof getTotalPlayers === 'function' ? getTotalPlayers : undefined);
+      if (typeof func !== 'function') {
+        results.push('getTotalPlayers skipped (function not found)');
+        return;
+      }
+      try {
+        const g1 = { players: { active: ['A','B'], queue: ['C'] } };
+        const g2 = { playerCreationOrder: ['A','B'] };
+        const g3 = {};
+        assertEqual(func(g1), 3, 'g1 total=3');
+        assertEqual(func(g2), 2, 'g2 total=2');
+        assertEqual(func(g3), 0, 'g3 total=0');
+        results.push('getTotalPlayers tests passed');
+      } catch (e) { results.push('getTotalPlayers failed: '+e.message); }
+    })();
+
+    // Test formatTimestamp
+    (function(){
+      const func = globalThis.formatTimestamp || (typeof formatTimestamp === 'function' ? formatTimestamp : undefined);
+      if (typeof func !== 'function') {
+        results.push('formatTimestamp skipped (function not found)');
+        return;
+      }
+      try {
+        const now = Date.now();
+        const d = new Date(now);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        const hh = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+        const expected = `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+        assertEqual(func(now), expected, 'formatTimestamp now');
+        assertEqual(func('abc'), '', 'formatTimestamp invalid');
+        results.push('formatTimestamp tests passed');
+      } catch (e) { results.push('formatTimestamp failed: '+e.message); }
+    })();
+
     console.log('Unit tests results:', results);
     alert('Unit tests finished. See console for details.');
   }

@@ -28,26 +28,21 @@ db.prepare(`CREATE TABLE IF NOT EXISTS games (
   created_at INTEGER
 )`).run();
 
-function getAllGames() {
-  const rows = db.prepare('SELECT id, name, data, created_at FROM games ORDER BY created_at DESC').all();
-  return rows.map(r => ({ id: r.id, name: r.name, data: JSON.parse(r.data || '{}'), createdAt: r.created_at }));
-}
-
 app.get('/api/games', (req, res) => {
   try {
     const includeRounds = String(req.query.includeRounds || '').toLowerCase() === 'true';
     const rows = db.prepare('SELECT id, name, data, created_at, rowid FROM games ORDER BY created_at DESC').all();
     const list = rows.map(r => {
       const parsed = JSON.parse(r.data || '{}');
-      if (includeRounds) return { id: r.id, name: r.name, data: parsed || {}, createdAt: r.created_at };
+      const createdAt = parsed.createdAt;
+      if (includeRounds) return { id: r.id, name: r.name, data: parsed || {}, createdAt };
       // Return metadata-only to save bandwidth
       return {
         id: r.id,
         name: r.name,
-        createdAt: r.created_at,
+        createdAt,
         roundCount: Array.isArray(parsed.rounds) ? parsed.rounds.length : 0,
-        playerCreationOrder: parsed.playerCreationOrder || (parsed.players ? [...(parsed.players.active||[]), ...(parsed.players.queue||[])] : []),
-        localOnly: !!parsed.localOnly
+        playerCreationOrder: parsed.playerCreationOrder || (parsed.players ? [...(parsed.players.active||[]), ...(parsed.players.queue||[])] : [])
       };
     });
     res.json(list);
@@ -61,7 +56,8 @@ app.get('/api/games/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT id, name, data, created_at FROM games WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    res.json({ id: row.id, name: row.name, data: JSON.parse(row.data || '{}'), createdAt: row.created_at });
+    const parsed = JSON.parse(row.data || '{}');
+    res.json({ id: row.id, data: parsed });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load game' });
@@ -73,13 +69,15 @@ app.post('/api/games', (req, res) => {
     const payload = req.body || {};
     const id = payload.id || 'game-' + Date.now();
     const name = payload.name || ('Game ' + Date.now());
-    const data = JSON.stringify(payload.data || {});
-    const createdAt = Date.now();
+    const parsedData = payload.data || {};
+    // Prefer client-supplied createdAt inside game data; fall back to now
+    const createdAt = parsedData.createdAt || Date.now();
+    const data = JSON.stringify(parsedData);
 
     db.prepare('INSERT OR REPLACE INTO games(id,name,data,created_at) VALUES(?,?,?,?)')
       .run(id, name, data, createdAt);
 
-    res.status(201).json({ id, name, data: JSON.parse(data), createdAt });
+    res.status(201).json({ id, name, data: parsedData });
     try { if (typeof broadcast === 'function') broadcast({ type: 'games-updated' }); } catch (e) { console.warn('broadcast failed in POST /api/games', e); }
   } catch (err) {
     console.error(err);
@@ -103,13 +101,14 @@ app.put('/api/games/:id', (req, res) => {
     const merged = { ...existing, ...incoming };
     merged.rounds = Array.isArray(incoming.rounds) ? incoming.rounds : (existing.rounds || []);
 
-    const data = JSON.stringify(merged);
-    const createdAt = payload.createdAt || existingCreated || Date.now();
+    // Prefer createdAt embedded in game data; otherwise preserve existing DB value
+    const createdAt = merged.createdAt || existingCreated || Date.now();
 
+    const data = JSON.stringify(merged);
     db.prepare('INSERT OR REPLACE INTO games(id,name,data,created_at) VALUES(?,?,?,?)')
       .run(id, name, data, createdAt);
 
-    res.json({ id, name, data: JSON.parse(data), createdAt });
+    res.json({ id, name, data: merged });
     try { if (typeof broadcast === 'function') broadcast({ type: 'game-updated', id }); } catch (e) { console.warn('broadcast failed in PUT /api/games/:id', e); }
   } catch (err) {
     console.error(err);
